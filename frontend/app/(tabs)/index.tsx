@@ -1,13 +1,15 @@
 import { useEffect, useState, useCallback } from "react";
 import { View, ScrollView, RefreshControl, Pressable } from "react-native";
 import { useRouter, useFocusEffect } from "expo-router";
-import { Screen, TP, Tile, ActionButton, Divider, StatusPill } from "@/src/ui";
+import { Screen, TP, Tile, ActionButton, Divider, StatusPill, SyncBanner } from "@/src/ui";
 import { api, theme } from "@/src/api";
 import { useAuth } from "@/src/auth";
+import { useNetwork } from "@/src/network";
 
 export default function Home() {
   const router = useRouter();
   const { user, org, subscription, refresh } = useAuth();
+  const { syncState, pendingCount, syncNow, refreshPending } = useNetwork();
   const [data, setData] = useState<any>(null);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -15,14 +17,16 @@ export default function Home() {
     try { const d = await api.dashboard(); setData(d); } catch {}
   }, []);
 
-  useFocusEffect(useCallback(() => { load(); refresh(); }, [load, refresh]));
+  useFocusEffect(useCallback(() => { load(); refresh(); refreshPending(); }, [load, refresh, refreshPending]));
 
-  const onRefresh = async () => { setRefreshing(true); await load(); await refresh(); setRefreshing(false); };
+  const onRefresh = async () => { setRefreshing(true); await load(); await refresh(); await refreshPending(); setRefreshing(false); };
 
   const notifs = data?.notifications || [];
+  const pending = data?.pending_controls || [];
 
   return (
     <Screen scroll={false} testID="home-screen">
+      <SyncBanner testID="sync-banner" syncState={syncState} pendingCount={pendingCount} onSync={syncNow} />
       <ScrollView contentContainerStyle={{ paddingBottom: 40 }} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.brand} />}>
         {/* Header */}
         <View style={{ backgroundColor: theme.dark, padding: 20, borderBottomWidth: 2, borderBottomColor: theme.borderStrong }}>
@@ -64,9 +68,27 @@ export default function Home() {
           </View>
           <View style={{ flexDirection: "row", gap: 8 }}>
             <ActionButton testID="action-losses" label="Pertes" icon="✕" onPress={() => router.push("/losses")} />
-            <ActionButton testID="action-search" label="Recherche" icon="⌕" onPress={() => router.push("/(tabs)/search")} />
+            <ActionButton testID="action-stats" label="Statistiques" icon="▦" onPress={() => router.push("/statistics")} />
             <ActionButton testID="action-archives" label="Archives" icon="▤" onPress={() => router.push("/(tabs)/archives")} />
           </View>
+        </View>
+
+        {/* Pending controls */}
+        <View style={{ paddingHorizontal: 16, paddingTop: 16 }}>
+          <TP weight="black" size={11} style={{ textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Contrôles à effectuer</TP>
+          {pending.length === 0 ? (
+            <View style={{ backgroundColor: theme.success, padding: 14, borderWidth: 2, borderColor: theme.borderStrong }} testID="pending-empty">
+              <TP color="#FFF" weight="black" size={14}>AUCUN CONTRÔLE EN ATTENTE ✓</TP>
+            </View>
+          ) : pending.map((p: any, i: number) => (
+            <Pressable key={i} testID={`pending-${i}`} onPress={() => router.push(p.route)} style={{ borderWidth: 2, borderColor: theme.borderStrong, padding: 12, marginBottom: 6, borderLeftWidth: 8, borderLeftColor: theme.brand, flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+              <View style={{ flex: 1 }}>
+                <TP weight="black" size={13}>{p.title}</TP>
+                <TP size={12} color={theme.textMuted}>{p.detail}</TP>
+              </View>
+              <TP weight="black" color={theme.brand}>{"›"}</TP>
+            </Pressable>
+          ))}
         </View>
 
         {/* Notifications */}

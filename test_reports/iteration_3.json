@@ -1,0 +1,42 @@
+{
+  "summary": "Iteration 3 backend + frontend regression: 46/46 pytest tests PASS. All new features verified: offline idempotency (client_id) on receptions/temperatures/cleaning/non-conformities/losses returns identical record on double POST; GET /api/statistics returns weeks/months/receptions/losses/nc/temperatures per-period + temperature_conformity + dlc_stats + totals; GET & PUT /api/reminders/config (defaults 08:00/18:00 + 20:00; employe -> 403); GET /api/reminders/pending computes uncompleted controls; /api/dashboard now includes pending_controls; CSV export for 5 doc_types + lot history with UTF-8 BOM and ';' delimiter; invalid CSV type -> 400. Strict company isolation confirmed with 2 fresh orgs (list, csv, batches, statistics, reminders all scoped by org_id; same client_id across orgs is allowed and namespaced). Existing MVP suite (auth, receptions, batches, temperatures, cleaning, NC+PATCH, losses, search, archives, PDF, users, subscribe/cancel, file upload) is still fully green. Frontend UI validated on mobile viewport (390x844): login -> dashboard (sync banner 'EN LIGNE', 'Contrôles à effectuer' section, Statistiques action button, all KPI tiles), /statistics renders totals + period toggle + bar/pie charts, /reminders manager can toggle temperature times/cleaning + save (confirmation 'Enregistré ✓' shown), archives screen shows 'EXPORTER CSV' + 'FILTRES' panel. No red screen errors.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "expo-router / react-native-web", "issue": "Console warning: 'props.pointerEvents is deprecated. Use style.pointerEvents' (already reported iteration 1; still present). Non-blocking, but should be migrated. Likely coming from a library (react-native-gesture-handler / react-native-svg / gifted-charts) rather than app code."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/conftest.py",
+    "/app/backend/tests/test_tracepro_api.py",
+    "/app/backend/tests/test_iteration3_features.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "(Optional) Migrate props.pointerEvents -> style.pointerEvents where possible; if it comes from a 3rd-party lib, bump versions.",
+    "(Optional) server.py is 1106 lines -> consider splitting into routers (auth, receptions, statistics, reminders, csv) for maintainability; non-blocking.",
+    "(Optional, from iter-2) surface a 'cancel_at_period_end' / 'canceled_on_trial' sub-state on /subscription so UI can show 'annulé - accès jusqu'au JJ/MM/AAAA' while trial is still active."
+  ],
+  "critical_code_review_comments": [
+    "create_doc() correctly scopes idempotency by (id, org_id) so client_id collisions across orgs are safe (verified in TestCompanyIsolation).",
+    "CSV export uses regex $regex user input directly (product/batch/supplier). Values are already scoped by org_id, but consider re.escape() on user-supplied regex to avoid accidental regex-injection / catastrophic backtracking on malformed input.",
+    "compute_pending_controls uses count_documents on created_at >= today_start (UTC). If servers are in another TZ, 'today' boundary may not match user's local day; acceptable for MVP but worth flagging for FR customers on DST edges.",
+    "statistics() loads up to 5000 docs per collection into memory — fine for MVP but should be aggregated in Mongo ($group by isoWeek/month) once orgs grow.",
+    "Frontend: statistics.tsx has 'import { useEffect }' unused; reminders.tsx imports 'Divider' unused. Cosmetic."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration3_features.py (new - 22 tests for offline idempotency, statistics, reminders, CSV export, and company isolation)"
+  ],
+  "success_rate": {"backend": "100% (46/46)", "frontend": "100% of critical flows verified (dashboard sync banner + pending controls, statistics screen with charts + period toggle, reminders save flow, archives CSV button visible)"},
+  "seed_data_creation": "New TEST_-prefixed accounts created for isolation tests: TEST_isoA_*, TEST_isoB_* + records TESTIDR*/TESTFLT*/TESTSTAT*/TESTCSV*/TESTISOA*/TESTISOB*. All benign, prefixed for future cleanup.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "All 4 iteration-3 features are backend-green and frontend-visible. Offline queue itself (NetInfo listener + AsyncStorage flush in /app/frontend/src/offline.ts + network.tsx) cannot be exercised via web (NetInfo is a no-op on web), so the idempotency guarantee is the only reliable server-side proof — and it is now covered by TestOfflineIdempotency. If a native build is done later, add a device-level test that: (1) disables network, (2) posts a reception, (3) re-enables, (4) verifies SyncBanner transitions Offline -> Synchronizing -> Synchronized and only 1 record ends up in DB.",
+  "rca_of_issue": "N/A - no bugs found this iteration."
+}

@@ -109,6 +109,18 @@ export const api = {
     const token = await readToken();
     return { url: `${API}/api/export/batch/${encodeURIComponent(batch)}`, token };
   },
+
+  statistics: () => request("/statistics"),
+
+  remindersConfig: () => request("/reminders/config"),
+  saveRemindersConfig: (body: any) => request("/reminders/config", { method: "PUT", body: JSON.stringify(body) }),
+  remindersPending: () => request("/reminders/pending"),
+
+  csvUrl: (type: string, filters: Record<string, string> = {}) => {
+    const qs = Object.entries(filters).filter(([, v]) => v).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join("&");
+    return `${API}/api/export/csv/${type}${qs ? `?${qs}` : ""}`;
+  },
+  csvBatchUrl: (batch: string) => `${API}/api/export/csv-batch/${encodeURIComponent(batch)}`,
 };
 
 export const theme = {

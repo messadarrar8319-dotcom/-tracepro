@@ -121,6 +121,24 @@ export function Divider() {
   return <View style={{ height: 2, backgroundColor: theme.borderStrong, marginVertical: 8 }} />;
 }
 
+export function SyncBanner({ syncState, pendingCount, onSync, testID }: { syncState: "online" | "offline" | "synchronizing" | "synchronized"; pendingCount: number; onSync?: () => void; testID?: string }) {
+  const map = {
+    online: { bg: theme.success, label: "EN LIGNE", icon: "●" },
+    offline: { bg: theme.error, label: "HORS LIGNE", icon: "⚠" },
+    synchronizing: { bg: theme.warning, label: "SYNCHRONISATION…", icon: "↻" },
+    synchronized: { bg: theme.success, label: "SYNCHRONISÉ ✓", icon: "✓" },
+  } as const;
+  const s = map[syncState];
+  const showQueue = pendingCount > 0 && syncState !== "synchronizing";
+  const Comp: any = showQueue && onSync ? Pressable : View;
+  return (
+    <Comp testID={testID} onPress={showQueue ? onSync : undefined} style={{ backgroundColor: s.bg, paddingHorizontal: 16, paddingVertical: 8, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+      <TP color="#FFF" weight="black" size={12} style={{ letterSpacing: 0.5 }}>{s.icon}  {s.label}</TP>
+      {pendingCount > 0 ? <TP color="#FFF" weight="bold" size={11}>{pendingCount} en attente{onSync ? " · SYNCHRONISER" : ""}</TP> : null}
+    </Comp>
+  );
+}
+
 export function BottomBar({ children }: { children: React.ReactNode }) {
   const insets = useSafeAreaInsets();
   return <View style={{ padding: 16, paddingBottom: 16 + insets.bottom, backgroundColor: theme.bg, borderTopWidth: 2, borderTopColor: theme.borderStrong }}>{children}</View>;

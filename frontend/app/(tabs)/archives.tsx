@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { View, ScrollView, Pressable, Platform, Linking } from "react-native";
 import { useFocusEffect } from "expo-router";
-import { Screen, TP, Header, Btn } from "@/src/ui";
+import { Screen, TP, Header, Btn, Input } from "@/src/ui";
 import { api, theme } from "@/src/api";
 
 const TYPES: [string, string][] = [
@@ -13,6 +13,8 @@ export default function Archives() {
   const [data, setData] = useState<any>({});
   const [year, setYear] = useState<number | undefined>(undefined);
   const [tab, setTab] = useState<string>("receptions");
+  const [showFilters, setShowFilters] = useState(false);
+  const [filters, setFilters] = useState({ date_from: "", date_to: "", product: "", batch: "", supplier: "" });
 
   const load = useCallback(async () => {
     try { const r: any = await api.archives(year); setData(r); } catch {}
@@ -22,10 +24,20 @@ export default function Archives() {
 
   const years = [new Date().getFullYear(), new Date().getFullYear() - 1];
 
+  const openUrl = (url: string) => {
+    if (Platform.OS === "web") window.open(url, "_blank");
+    else Linking.openURL(url);
+  };
+
   const exportPdf = async (batch: string) => {
     const { url, token } = await api.batchPdfUrl(batch);
-    if (Platform.OS === "web") window.open(`${url}?token=${token}`, "_blank");
-    else Linking.openURL(url);
+    openUrl(Platform.OS === "web" ? `${url}?token=${token}` : url);
+  };
+
+  const exportCsv = () => {
+    const clean: Record<string, string> = {};
+    Object.entries(filters).forEach(([k, v]) => { if (v) clean[k] = v; });
+    openUrl(api.csvUrl(tab, clean));
   };
 
   return (
@@ -47,6 +59,30 @@ export default function Archives() {
           </Pressable>
         ))}
       </ScrollView>
+
+      {/* CSV export bar */}
+      <View style={{ flexDirection: "row", gap: 8, paddingHorizontal: 16, marginBottom: 8 }}>
+        <Pressable testID="csv-toggle-filters" onPress={() => setShowFilters((s) => !s)} style={{ flex: 1, borderWidth: 2, borderColor: theme.borderStrong, padding: 12, alignItems: "center", backgroundColor: showFilters ? theme.dark : theme.bg }}>
+          <TP weight="black" size={12} color={showFilters ? "#FFF" : theme.text}>FILTRES {showFilters ? "▲" : "▼"}</TP>
+        </Pressable>
+        <Pressable testID="csv-export" onPress={exportCsv} style={{ flex: 1, borderWidth: 2, borderColor: theme.borderStrong, padding: 12, alignItems: "center", backgroundColor: theme.success }}>
+          <TP weight="black" size={12} color="#FFF">EXPORTER CSV</TP>
+        </Pressable>
+      </View>
+
+      {showFilters && (
+        <View style={{ paddingHorizontal: 16, marginBottom: 8 }}>
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            <View style={{ flex: 1 }}><Input label="Du" testID="csv-date-from" value={filters.date_from} onChangeText={(v) => setFilters({ ...filters, date_from: v })} placeholder="YYYY-MM-DD" /></View>
+            <View style={{ flex: 1 }}><Input label="Au" testID="csv-date-to" value={filters.date_to} onChangeText={(v) => setFilters({ ...filters, date_to: v })} placeholder="YYYY-MM-DD" /></View>
+          </View>
+          <Input label="Produit" testID="csv-product" value={filters.product} onChangeText={(v) => setFilters({ ...filters, product: v })} />
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            <View style={{ flex: 1 }}><Input label="Lot" testID="csv-batch" value={filters.batch} onChangeText={(v) => setFilters({ ...filters, batch: v })} /></View>
+            <View style={{ flex: 1 }}><Input label="Fournisseur" testID="csv-supplier" value={filters.supplier} onChangeText={(v) => setFilters({ ...filters, supplier: v })} /></View>
+          </View>
+        </View>
+      )}
 
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
         {(data[tab] || []).length === 0 && <TP color={theme.textMuted}>Aucun enregistrement.</TP>}

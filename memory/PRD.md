@@ -36,6 +36,13 @@ Comptes, tableau de bord, réceptions, lots/traçabilité, scanner, recherche, D
 - ✅ Photos via Emergent Object Storage
 - ✅ Backend: 24/24 tests pytest verts
 
+## Implemented (Itération 2 — 2026-08-16)
+- ✅ **Mode hors ligne**: file d'attente locale (5 actions), synchro auto au retour du réseau, statuts En ligne/Hors ligne/Synchronisation/Synchronisé, idempotence via `client_id` (aucun doublon)
+- ✅ **Statistiques**: page dédiée avec graphiques (barres + camemberts) — réceptions/pertes/NC/températures par semaine & mois, stats DLC, conformité températures (données réelles)
+- ✅ **Rappels quotidiens**: config par le responsable (températures multi-horaires, nettoyage, contrôles personnalisés), section « Contrôles à effectuer » sur le tableau de bord (calcul réel)
+- ✅ **Export CSV**: réceptions, températures, nettoyage, non-conformités, pertes + historique de lot, avec filtres (date, produit, lot, fournisseur), isolation stricte par entreprise
+- ✅ Backend: 46/46 tests pytest verts (24 régression + 22 nouveaux)
+
 ## Backlog (P1/P2)
 - P1: Mode hors connexion + synchronisation automatique
 - P1: Export CSV

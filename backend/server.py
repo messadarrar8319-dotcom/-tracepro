@@ -1,5 +1,6 @@
 """TRACEPRO backend – Food traceability API."""
 import os
+import csv
 import uuid
 import hashlib
 import secrets
@@ -116,6 +117,7 @@ class InviteIn(BaseModel):
 
 
 class ReceptionIn(BaseModel):
+    client_id: Optional[str] = None  # offline idempotency key
     supplier: str
     product: str
     reference: Optional[str] = None
@@ -133,6 +135,7 @@ class ReceptionIn(BaseModel):
 
 
 class TemperatureIn(BaseModel):
+    client_id: Optional[str] = None
     zone: str
     zone_type: str  # chambre_froide, congelateur, vitrine, reserve, autre
     temperature: float
@@ -141,6 +144,7 @@ class TemperatureIn(BaseModel):
 
 
 class CleaningIn(BaseModel):
+    client_id: Optional[str] = None
     zone: str
     operation_type: str
     status: str = "termine"
@@ -148,6 +152,7 @@ class CleaningIn(BaseModel):
 
 
 class NonConformityIn(BaseModel):
+    client_id: Optional[str] = None
     problem_type: str
     concerned_item: str
     batch_number: Optional[str] = None
@@ -159,6 +164,7 @@ class NonConformityIn(BaseModel):
 
 
 class LossIn(BaseModel):
+    client_id: Optional[str] = None
     product: str
     batch_number: Optional[str] = None
     quantity: float
@@ -167,6 +173,14 @@ class LossIn(BaseModel):
     estimated_value: Optional[float] = None
     comment: Optional[str] = None
     photo: Optional[str] = None
+
+
+class ReminderConfigIn(BaseModel):
+    temperature_enabled: bool = True
+    temperature_times: List[str] = ["08:00", "18:00"]
+    cleaning_enabled: bool = True
+    cleaning_time: str = "20:00"
+    custom_controls: List[dict] = []  # [{"name": str, "time": "HH:MM"}]
 
 
 class ProfileUpdate(BaseModel):
@@ -198,6 +212,30 @@ async def get_org(org_id: str) -> dict:
     if not org:
         raise HTTPException(404, "Organisation introuvable")
     return org
+
+
+async def create_doc(collection, body, user) -> dict:
+    """Insert a document with offline idempotency.
+    If body carries a `client_id` that already exists for this org, the existing
+    document is returned instead of creating a duplicate (safe for offline sync)."""
+    data = body.model_dump()
+    client_id = data.pop("client_id", None)
+    doc_id = client_id or str(uuid.uuid4())
+    if client_id:
+        existing = await collection.find_one({"id": doc_id, "org_id": user["org_id"]}, {"_id": 0})
+        if existing:
+            return existing
+    doc = {
+        "id": doc_id,
+        "org_id": user["org_id"],
+        "created_by": user["id"],
+        "created_by_name": user["name"],
+        "created_at": now(),
+        **data,
+    }
+    await collection.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
 
 
 def compute_subscription_status(org: dict) -> dict:
@@ -445,17 +483,7 @@ async def download_file(path: str, token: Optional[str] = Query(None), user=Depe
 # ==================== RECEPTIONS ====================
 @api.post("/receptions")
 async def create_reception(body: ReceptionIn, user=Depends(current_user)):
-    doc = {
-        "id": str(uuid.uuid4()),
-        "org_id": user["org_id"],
-        "created_by": user["id"],
-        "created_by_name": user["name"],
-        "created_at": now(),
-        **body.model_dump(),
-    }
-    await db.receptions.insert_one(doc)
-    doc.pop("_id", None)
-    return doc
+    return await create_doc(db.receptions, body, user)
 
 
 @api.get("/receptions")
@@ -539,17 +567,7 @@ async def get_batch(batch_number: str, user=Depends(current_user)):
 # ==================== TEMPERATURES ====================
 @api.post("/temperatures")
 async def create_temperature(body: TemperatureIn, user=Depends(current_user)):
-    doc = {
-        "id": str(uuid.uuid4()),
-        "org_id": user["org_id"],
-        "created_by": user["id"],
-        "created_by_name": user["name"],
-        "created_at": now(),
-        **body.model_dump(),
-    }
-    await db.temperatures.insert_one(doc)
-    doc.pop("_id", None)
-    return doc
+    return await create_doc(db.temperatures, body, user)
 
 
 @api.get("/temperatures")
@@ -561,17 +579,7 @@ async def list_temperatures(user=Depends(current_user), limit: int = 200):
 # ==================== CLEANING ====================
 @api.post("/cleaning")
 async def create_cleaning(body: CleaningIn, user=Depends(current_user)):
-    doc = {
-        "id": str(uuid.uuid4()),
-        "org_id": user["org_id"],
-        "created_by": user["id"],
-        "created_by_name": user["name"],
-        "created_at": now(),
-        **body.model_dump(),
-    }
-    await db.cleaning.insert_one(doc)
-    doc.pop("_id", None)
-    return doc
+    return await create_doc(db.cleaning, body, user)
 
 
 @api.get("/cleaning")
@@ -583,17 +591,7 @@ async def list_cleaning(user=Depends(current_user), limit: int = 200):
 # ==================== NON-CONFORMITIES ====================
 @api.post("/non-conformities")
 async def create_nc(body: NonConformityIn, user=Depends(current_user)):
-    doc = {
-        "id": str(uuid.uuid4()),
-        "org_id": user["org_id"],
-        "created_by": user["id"],
-        "created_by_name": user["name"],
-        "created_at": now(),
-        **body.model_dump(),
-    }
-    await db.non_conformities.insert_one(doc)
-    doc.pop("_id", None)
-    return doc
+    return await create_doc(db.non_conformities, body, user)
 
 
 @api.get("/non-conformities")
@@ -618,17 +616,7 @@ async def update_nc(nc_id: str, status: str, user=Depends(current_user)):
 # ==================== LOSSES ====================
 @api.post("/losses")
 async def create_loss(body: LossIn, user=Depends(current_user)):
-    doc = {
-        "id": str(uuid.uuid4()),
-        "org_id": user["org_id"],
-        "created_by": user["id"],
-        "created_by_name": user["name"],
-        "created_at": now(),
-        **body.model_dump(),
-    }
-    await db.losses.insert_one(doc)
-    doc.pop("_id", None)
-    return doc
+    return await create_doc(db.losses, body, user)
 
 
 @api.get("/losses")
@@ -661,6 +649,186 @@ async def search(q: str, user=Depends(current_user)):
         if b and b not in batches:
             batches[b] = {"batch_number": b, "product": r.get("product"), "supplier": r.get("supplier"), "dlc": r.get("dlc")}
     return {"receptions": matched, "batches": list(batches.values())}
+
+
+# ==================== REMINDERS ====================
+DEFAULT_REMINDER = {
+    "temperature_enabled": True,
+    "temperature_times": ["08:00", "18:00"],
+    "cleaning_enabled": True,
+    "cleaning_time": "20:00",
+    "custom_controls": [],
+}
+
+
+async def get_reminder_config(org_id: str) -> dict:
+    cfg = await db.reminder_configs.find_one({"org_id": org_id}, {"_id": 0})
+    if not cfg:
+        return {**DEFAULT_REMINDER, "org_id": org_id}
+    merged = {**DEFAULT_REMINDER, **cfg}
+    return merged
+
+
+async def compute_pending_controls(user) -> list:
+    """Compute today's controls not yet completed. Uses real DB counts only."""
+    org_id = user["org_id"]
+    cfg = await get_reminder_config(org_id)
+    today_start = datetime(now().year, now().month, now().day, tzinfo=timezone.utc)
+    today_end = today_start + timedelta(days=1)
+    pending = []
+
+    if cfg.get("temperature_enabled"):
+        expected = len(cfg.get("temperature_times") or [])
+        done = await db.temperatures.count_documents({"org_id": org_id, "created_at": {"$gte": today_start, "$lt": today_end}})
+        remaining = max(0, expected - done)
+        if remaining > 0:
+            pending.append({
+                "type": "temperature",
+                "title": "Contrôle des températures",
+                "detail": f"{remaining} contrôle(s) restant(s) aujourd'hui ({done}/{expected})",
+                "route": "/temperature",
+            })
+
+    if cfg.get("cleaning_enabled"):
+        done = await db.cleaning.count_documents({"org_id": org_id, "created_at": {"$gte": today_start, "$lt": today_end}})
+        if done == 0:
+            pending.append({
+                "type": "cleaning",
+                "title": "Nettoyage & désinfection",
+                "detail": f"À effectuer aujourd'hui (avant {cfg.get('cleaning_time')})",
+                "route": "/cleaning",
+            })
+
+    for c in (cfg.get("custom_controls") or []):
+        name = c.get("name")
+        if not name:
+            continue
+        done = await db.cleaning.count_documents({"org_id": org_id, "operation_type": name, "created_at": {"$gte": today_start, "$lt": today_end}})
+        if done == 0:
+            pending.append({
+                "type": "custom",
+                "title": name,
+                "detail": f"Contrôle à effectuer (avant {c.get('time', '')})",
+                "route": "/cleaning",
+            })
+    return pending
+
+
+@api.get("/reminders/config")
+async def reminders_config_get(user=Depends(current_user)):
+    return await get_reminder_config(user["org_id"])
+
+
+@api.put("/reminders/config")
+async def reminders_config_put(body: ReminderConfigIn, user=Depends(require_manager)):
+    data = body.model_dump()
+    await db.reminder_configs.update_one(
+        {"org_id": user["org_id"]},
+        {"$set": {**data, "org_id": user["org_id"]}},
+        upsert=True,
+    )
+    return await get_reminder_config(user["org_id"])
+
+
+@api.get("/reminders/pending")
+async def reminders_pending(user=Depends(current_user)):
+    return {"pending": await compute_pending_controls(user)}
+
+
+# ==================== STATISTICS ====================
+def _week_key(dt: datetime):
+    iso = dt.isocalendar()
+    return f"{iso[0]}-S{iso[1]:02d}"
+
+
+def _month_key(dt: datetime):
+    return f"{dt.year}-{dt.month:02d}"
+
+
+@api.get("/statistics")
+async def statistics(user=Depends(current_user)):
+    org_id = user["org_id"]
+    n = now()
+    receptions = await db.receptions.find({"org_id": org_id}, {"_id": 0}).to_list(5000)
+    losses = await db.losses.find({"org_id": org_id}, {"_id": 0}).to_list(5000)
+    temps = await db.temperatures.find({"org_id": org_id}, {"_id": 0}).to_list(5000)
+    ncs = await db.non_conformities.find({"org_id": org_id}, {"_id": 0}).to_list(5000)
+
+    # Build last 8 weeks and last 6 months buckets
+    weeks = []
+    for i in range(7, -1, -1):
+        d = n - timedelta(weeks=i)
+        weeks.append(_week_key(d))
+    months = []
+    seen = set()
+    for i in range(5, -1, -1):
+        d = (n.replace(day=1) - timedelta(days=i * 30))
+        k = _month_key(d)
+        if k not in seen:
+            seen.add(k)
+            months.append(k)
+
+    def bucketize(items, keyfn, keyset, value=None):
+        counts = {k: 0 for k in keyset}
+        for it in items:
+            dt = it.get("created_at")
+            if not dt:
+                continue
+            k = keyfn(dt)
+            if k in counts:
+                counts[k] += (value(it) if value else 1)
+        return [{"label": k, "value": round(counts[k], 2)} for k in keyset]
+
+    lossval = lambda it: (it.get("estimated_value") or 0)
+
+    # DLC stats
+    batches = {}
+    for r in receptions:
+        b = r.get("batch_number")
+        if b:
+            batches.setdefault(b, r)
+    dlc_ok = dlc_soon = dlc_expired = dlc_none = 0
+    three_days = n + timedelta(days=3)
+    for b, r in batches.items():
+        dlc = r.get("dlc")
+        if not dlc:
+            dlc_none += 1
+            continue
+        try:
+            dt = datetime.strptime(dlc, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            if dt < n:
+                dlc_expired += 1
+            elif dt <= three_days:
+                dlc_soon += 1
+            else:
+                dlc_ok += 1
+        except Exception:
+            dlc_none += 1
+
+    temp_conform = sum(1 for t in temps if t.get("conforming", True))
+    temp_nc = sum(1 for t in temps if not t.get("conforming", True))
+
+    return {
+        "weeks": weeks,
+        "months": months,
+        "receptions_week": bucketize(receptions, _week_key, weeks),
+        "receptions_month": bucketize(receptions, _month_key, months),
+        "losses_week": bucketize(losses, _week_key, weeks, lossval),
+        "losses_month": bucketize(losses, _month_key, months, lossval),
+        "nc_week": bucketize(ncs, _week_key, weeks),
+        "nc_month": bucketize(ncs, _month_key, months),
+        "temperatures_week": bucketize(temps, _week_key, weeks),
+        "temperatures_month": bucketize(temps, _month_key, months),
+        "temperature_conformity": {"conforme": temp_conform, "non_conforme": temp_nc},
+        "dlc_stats": {"ok": dlc_ok, "proche": dlc_soon, "depassee": dlc_expired, "sans_dlc": dlc_none},
+        "totals": {
+            "receptions": len(receptions),
+            "losses_count": len(losses),
+            "losses_value": round(sum(lossval(l) for l in losses), 2),
+            "nc": len(ncs),
+            "temperatures": len(temps),
+        },
+    }
 
 
 # ==================== DASHBOARD ====================
@@ -706,12 +874,16 @@ async def dashboard(user=Depends(current_user)):
     temp_nc = sum(1 for t in temps if not t.get("conforming", True))
     open_ncs = sum(1 for n in ncs if n.get("status") != "resolue")
 
+    pending_controls = await compute_pending_controls(user)
+
     # Notifications feed
     notifs = []
     for e in dlc_expired[:5]:
         notifs.append({"type": "danger", "title": "DLC dépassée", "detail": f"{e['product']} (lot {e['batch_number']})"})
     for e in dlc_soon[:5]:
         notifs.append({"type": "warning", "title": "DLC proche", "detail": f"{e['product']} (lot {e['batch_number']}) - {e['dlc']}"})
+    for p in pending_controls:
+        notifs.append({"type": "warning", "title": p["title"], "detail": p["detail"]})
     if temp_nc:
         notifs.append({"type": "warning", "title": "Températures non conformes", "detail": f"{temp_nc} enregistrement(s)"})
     if open_ncs:
@@ -730,6 +902,7 @@ async def dashboard(user=Depends(current_user)):
         "non_conformites_open": open_ncs,
         "losses_count": len(losses),
         "losses_value": sum((l.get("estimated_value") or 0) for l in losses),
+        "pending_controls": pending_controls,
         "notifications": notifs,
         "dlc_soon_list": dlc_soon[:10],
         "dlc_expired_list": dlc_expired[:10],
@@ -797,6 +970,100 @@ async def export_batch_pdf(batch_number: str, user=Depends(current_user)):
     doc.build(story)
     buf.seek(0)
     return StreamingResponse(buf, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename=lot-{batch_number}.pdf"})
+
+
+# ==================== CSV EXPORT ====================
+CSV_COLUMNS = {
+    "receptions": ["created_at", "supplier", "product", "reference", "batch_number", "reception_date", "dlc", "quantity", "unit", "temperature", "conforming", "comment", "created_by_name"],
+    "temperatures": ["created_at", "zone", "zone_type", "temperature", "conforming", "comment", "created_by_name"],
+    "cleaning": ["created_at", "zone", "operation_type", "status", "comment", "created_by_name"],
+    "non_conformities": ["created_at", "problem_type", "concerned_item", "batch_number", "description", "corrective_action", "responsible", "status", "created_by_name"],
+    "losses": ["created_at", "product", "batch_number", "quantity", "unit", "reason", "estimated_value", "comment", "created_by_name"],
+}
+CSV_COLLECTIONS = {
+    "receptions": "receptions",
+    "temperatures": "temperatures",
+    "cleaning": "cleaning",
+    "non_conformities": "non_conformities",
+    "losses": "losses",
+}
+
+
+def _build_csv(rows: list, columns: list) -> BytesIO:
+    buf = BytesIO()
+    text = BytesIO()
+    import io
+    sio = io.StringIO()
+    writer = csv.writer(sio, delimiter=";")
+    writer.writerow(columns)
+    for r in rows:
+        line = []
+        for c in columns:
+            v = r.get(c)
+            if isinstance(v, datetime):
+                v = v.strftime("%Y-%m-%d %H:%M")
+            line.append("" if v is None else v)
+        writer.writerow(line)
+    buf.write("\ufeff".encode("utf-8"))  # BOM for Excel UTF-8
+    buf.write(sio.getvalue().encode("utf-8"))
+    buf.seek(0)
+    return buf
+
+
+@api.get("/export/csv/{doc_type}")
+async def export_csv(
+    doc_type: str,
+    user=Depends(current_user),
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    product: Optional[str] = Query(None),
+    batch: Optional[str] = Query(None),
+    supplier: Optional[str] = Query(None),
+):
+    if doc_type not in CSV_COLLECTIONS:
+        raise HTTPException(400, "Type de document invalide")
+    coll = db[CSV_COLLECTIONS[doc_type]]
+    query: dict = {"org_id": user["org_id"]}  # strict company isolation
+    if date_from or date_to:
+        rng = {}
+        if date_from:
+            try:
+                rng["$gte"] = datetime.strptime(date_from, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            except Exception:
+                raise HTTPException(400, "date_from invalide (YYYY-MM-DD)")
+        if date_to:
+            try:
+                rng["$lt"] = datetime.strptime(date_to, "%Y-%m-%d").replace(tzinfo=timezone.utc) + timedelta(days=1)
+            except Exception:
+                raise HTTPException(400, "date_to invalide (YYYY-MM-DD)")
+        query["created_at"] = rng
+    if product:
+        query["product"] = {"$regex": product, "$options": "i"}
+    if batch:
+        query["batch_number"] = {"$regex": batch, "$options": "i"}
+    if supplier:
+        query["supplier"] = {"$regex": supplier, "$options": "i"}
+
+    rows = await coll.find(query, {"_id": 0}).sort("created_at", -1).to_list(5000)
+    buf = _build_csv(rows, CSV_COLUMNS[doc_type])
+    return StreamingResponse(buf, media_type="text/csv", headers={"Content-Disposition": f"attachment; filename=tracepro-{doc_type}.csv"})
+
+
+@api.get("/export/csv-batch/{batch_number}")
+async def export_batch_csv(batch_number: str, user=Depends(current_user)):
+    """Full lot history as CSV (receptions + losses + non-conformities)."""
+    data = await get_batch(batch_number, user)
+    rows = []
+    for ev in data["timeline"]:
+        rows.append({
+            "date": ev.get("date"),
+            "type": ev.get("type"),
+            "title": ev.get("title"),
+            "detail": ev.get("detail"),
+            "user": ev.get("user"),
+        })
+    buf = _build_csv(rows, ["date", "type", "title", "detail", "user"])
+    return StreamingResponse(buf, media_type="text/csv", headers={"Content-Disposition": f"attachment; filename=lot-{batch_number}.csv"})
 
 
 # ==================== ARCHIVES ====================

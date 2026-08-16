@@ -81,6 +81,10 @@ export default function Settings() {
         </View>
 
         {/* Users */}
+        <TP weight="black" size={11} style={{ textTransform: "uppercase", letterSpacing: 1, marginTop: 16, marginBottom: 8 }}>Rappels & contrôles</TP>
+        <Btn label="Configurer les rappels quotidiens" variant="ghost" onPress={() => router.push("/reminders")} testID="goto-reminders" />
+
+        {/* Users */}
         <TP weight="black" size={11} style={{ textTransform: "uppercase", letterSpacing: 1, marginTop: 16, marginBottom: 8 }}>Utilisateurs ({users.length})</TP>
         {users.map((u) => (
           <View key={u.id} style={{ borderWidth: 2, borderColor: theme.borderStrong, padding: 12, marginBottom: 6, flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>

@@ -3,11 +3,13 @@ import { View, ScrollView, Pressable, KeyboardAvoidingView, Platform } from "rea
 import { useRouter, useFocusEffect } from "expo-router";
 import { Screen, TP, Header, Input, Btn, StatusPill } from "@/src/ui";
 import { api, theme } from "@/src/api";
+import { useNetwork } from "@/src/network";
 
 const ZONES = ["Chambre froide", "Congélateur", "Vitrine", "Réserve", "Autre"];
 
 export default function Temperature() {
   const router = useRouter();
+  const { submit: netSubmit, online } = useNetwork();
   const [items, setItems] = useState<any[]>([]);
   const [f, setF] = useState<any>({ zone: "", zone_type: "chambre_froide", temperature: "", conforming: true, comment: "" });
   const [busy, setBusy] = useState(false);
@@ -23,7 +25,7 @@ export default function Temperature() {
     if (!f.zone || !f.temperature) { setErr("Zone et température requises"); return; }
     setBusy(true);
     try {
-      await api.createTemp({ ...f, temperature: parseFloat(f.temperature) });
+      await netSubmit("temperature", { ...f, temperature: parseFloat(f.temperature) });
       setF({ zone: "", zone_type: f.zone_type, temperature: "", conforming: true, comment: "" });
       await load();
     } catch (e: any) { setErr(e.message); }
@@ -64,7 +66,8 @@ export default function Temperature() {
 
             <Input label="Commentaire" testID="temp-comment" value={f.comment} onChangeText={(v) => setF({ ...f, comment: v })} />
             {err ? <TP color={theme.error} weight="bold">{err}</TP> : null}
-            <Btn label={busy ? "..." : "Enregistrer"} onPress={submit} disabled={busy} testID="temp-submit" />
+            {!online ? <TP size={12} weight="bold" color={theme.warning} style={{ marginBottom: 8 }}>⚠ Hors ligne — enregistré localement</TP> : null}
+            <Btn label={busy ? "..." : online ? "Enregistrer" : "Enregistrer (hors ligne)"} onPress={submit} disabled={busy} testID="temp-submit" />
           </View>
 
           <TP weight="black" size={11} style={{ textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Historique ({items.length})</TP>

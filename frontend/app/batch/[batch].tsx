@@ -20,6 +20,13 @@ export default function BatchDetail() {
   const exportPdf = async () => {
     if (!batch) return;
     const { url, token } = await api.batchPdfUrl(batch);
+    if (Platform.OS === "web") window.open(`${url}?token=${token}`, "_blank");
+    else Linking.openURL(url);
+  };
+
+  const exportCsv = () => {
+    if (!batch) return;
+    const url = api.csvBatchUrl(batch);
     if (Platform.OS === "web") window.open(url, "_blank");
     else Linking.openURL(url);
   };
@@ -32,9 +39,14 @@ export default function BatchDetail() {
   return (
     <Screen scroll={false} testID="batch-screen">
       <Header title={`Lot ${batch}`} onBack={() => router.back()} right={
-        <Pressable onPress={exportPdf} testID="batch-export-pdf" style={{ backgroundColor: theme.dark, paddingHorizontal: 10, paddingVertical: 8 }}>
-          <TP color="#FFF" weight="black" size={11}>PDF</TP>
-        </Pressable>
+        <View style={{ flexDirection: "row", gap: 6 }}>
+          <Pressable onPress={exportCsv} testID="batch-export-csv" style={{ backgroundColor: theme.success, paddingHorizontal: 10, paddingVertical: 8 }}>
+            <TP color="#FFF" weight="black" size={11}>CSV</TP>
+          </Pressable>
+          <Pressable onPress={exportPdf} testID="batch-export-pdf" style={{ backgroundColor: theme.dark, paddingHorizontal: 10, paddingVertical: 8 }}>
+            <TP color="#FFF" weight="black" size={11}>PDF</TP>
+          </Pressable>
+        </View>
       } />
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
         <View style={{ backgroundColor: theme.dark, padding: 16, marginBottom: 16, borderWidth: 2, borderColor: theme.borderStrong }}>

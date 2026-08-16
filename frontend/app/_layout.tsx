@@ -8,6 +8,7 @@ import { StatusBar } from "expo-status-bar";
 
 import { useIconFonts } from "@/src/hooks/use-icon-fonts";
 import { AuthProvider, useAuth } from "@/src/auth";
+import { NetworkProvider } from "@/src/network";
 
 LogBox.ignoreAllLogs(true);
 SplashScreen.preventAutoHideAsync();
@@ -44,7 +45,9 @@ export default function RootLayout() {
       <SafeAreaProvider>
         <StatusBar style="dark" />
         <AuthProvider>
-          <AuthGate />
+          <NetworkProvider>
+            <AuthGate />
+          </NetworkProvider>
         </AuthProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

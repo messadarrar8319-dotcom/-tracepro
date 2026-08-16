@@ -3,6 +3,7 @@ import { View, ScrollView, Pressable, KeyboardAvoidingView, Platform } from "rea
 import { useRouter, useFocusEffect } from "expo-router";
 import { Screen, TP, Header, Input, Btn, StatusPill } from "@/src/ui";
 import { api, theme } from "@/src/api";
+import { useNetwork } from "@/src/network";
 
 const STATUS_LABELS: Record<string, { label: string; tone: any }> = {
   ouverte: { label: "Ouverte", tone: "danger" },
@@ -12,6 +13,7 @@ const STATUS_LABELS: Record<string, { label: string; tone: any }> = {
 
 export default function NonConformity() {
   const router = useRouter();
+  const { submit: netSubmit, online } = useNetwork();
   const [items, setItems] = useState<any[]>([]);
   const [f, setF] = useState<any>({ problem_type: "", concerned_item: "", batch_number: "", description: "", corrective_action: "", responsible: "", status: "ouverte" });
   const [busy, setBusy] = useState(false);
@@ -25,7 +27,7 @@ export default function NonConformity() {
     if (!f.problem_type || !f.description) return;
     setBusy(true);
     try {
-      await api.createNC(f);
+      await netSubmit("nonconformity", f);
       setF({ problem_type: "", concerned_item: "", batch_number: "", description: "", corrective_action: "", responsible: "", status: "ouverte" });
       await load();
     } finally { setBusy(false); }
@@ -49,7 +51,8 @@ export default function NonConformity() {
             <Input label="Description*" testID="nc-desc" value={f.description} onChangeText={(v) => setF({ ...f, description: v })} multiline numberOfLines={3} style={{ minHeight: 80 }} />
             <Input label="Action corrective" testID="nc-action" value={f.corrective_action} onChangeText={(v) => setF({ ...f, corrective_action: v })} />
             <Input label="Responsable" testID="nc-resp" value={f.responsible} onChangeText={(v) => setF({ ...f, responsible: v })} />
-            <Btn label={busy ? "..." : "Enregistrer"} onPress={submit} disabled={busy} testID="nc-submit" />
+            {!online ? <TP size={12} weight="bold" color={theme.warning} style={{ marginBottom: 8 }}>⚠ Hors ligne — enregistré localement</TP> : null}
+            <Btn label={busy ? "..." : online ? "Enregistrer" : "Enregistrer (hors ligne)"} onPress={submit} disabled={busy} testID="nc-submit" />
           </View>
 
           <TP weight="black" size={11} style={{ textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Fiches ({items.length})</TP>

@@ -4,9 +4,11 @@ import { useRouter, useLocalSearchParams } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
 import { Screen, TP, Header, Input, Btn, BottomBar } from "@/src/ui";
 import { api, theme } from "@/src/api";
+import { useNetwork } from "@/src/network";
 
 export default function NewReception() {
   const router = useRouter();
+  const { submit: netSubmit, online } = useNetwork();
   const params = useLocalSearchParams<{ barcode?: string }>();
   const [f, setF] = useState<any>({
     supplier: "", product: "", reference: "", batch_number: "",
@@ -43,8 +45,12 @@ export default function NewReception() {
         quantity: parseFloat(f.quantity),
         temperature: f.temperature ? parseFloat(f.temperature) : null,
       };
-      await api.createReception(body);
-      router.replace(`/batch/${encodeURIComponent(f.batch_number)}`);
+      const res = await netSubmit("reception", body);
+      if (res.queued) {
+        router.replace("/(tabs)");
+      } else {
+        router.replace(`/batch/${encodeURIComponent(f.batch_number)}`);
+      }
     } catch (e: any) { setErr(e.message); }
     finally { setBusy(false); }
   };
@@ -106,7 +112,8 @@ export default function NewReception() {
           {err ? <View style={{ backgroundColor: theme.error, padding: 12, marginTop: 8 }}><TP color="#FFF" weight="bold" testID="rec-error">{err}</TP></View> : null}
         </ScrollView>
         <BottomBar>
-          <Btn label={busy ? "..." : "Enregistrer la réception"} onPress={submit} disabled={busy} testID="rec-submit" />
+          {!online ? <TP size={12} weight="bold" color={theme.warning} style={{ marginBottom: 8, textAlign: "center" }}>⚠ Hors ligne — enregistré localement puis synchronisé</TP> : null}
+          <Btn label={busy ? "..." : online ? "Enregistrer la réception" : "Enregistrer (hors ligne)"} onPress={submit} disabled={busy} testID="rec-submit" />
         </BottomBar>
       </KeyboardAvoidingView>
     </Screen>

@@ -3,9 +3,11 @@ import { View, ScrollView, KeyboardAvoidingView, Platform } from "react-native";
 import { useRouter, useFocusEffect } from "expo-router";
 import { Screen, TP, Header, Input, Btn, Tile } from "@/src/ui";
 import { api, theme } from "@/src/api";
+import { useNetwork } from "@/src/network";
 
 export default function Losses() {
   const router = useRouter();
+  const { submit: netSubmit, online } = useNetwork();
   const [items, setItems] = useState<any[]>([]);
   const [f, setF] = useState<any>({ product: "", batch_number: "", quantity: "", unit: "kg", reason: "", estimated_value: "", comment: "" });
   const [busy, setBusy] = useState(false);
@@ -19,7 +21,7 @@ export default function Losses() {
     if (!f.product || !f.quantity || !f.reason) return;
     setBusy(true);
     try {
-      await api.createLoss({
+      await netSubmit("loss", {
         ...f,
         quantity: parseFloat(f.quantity),
         estimated_value: f.estimated_value ? parseFloat(f.estimated_value) : null,
@@ -60,7 +62,8 @@ export default function Losses() {
             <Input label="Motif*" testID="loss-reason" value={f.reason} onChangeText={(v) => setF({ ...f, reason: v })} placeholder="DLC dépassée, casse, etc." />
             <Input label="Valeur estimée (€)" testID="loss-value" value={f.estimated_value} onChangeText={(v) => setF({ ...f, estimated_value: v })} keyboardType="decimal-pad" />
             <Input label="Commentaire" testID="loss-comment" value={f.comment} onChangeText={(v) => setF({ ...f, comment: v })} />
-            <Btn label={busy ? "..." : "Enregistrer"} onPress={submit} disabled={busy} testID="loss-submit" />
+            {!online ? <TP size={12} weight="bold" color={theme.warning} style={{ marginBottom: 8 }}>⚠ Hors ligne — enregistré localement</TP> : null}
+            <Btn label={busy ? "..." : online ? "Enregistrer" : "Enregistrer (hors ligne)"} onPress={submit} disabled={busy} testID="loss-submit" />
           </View>
 
           <TP weight="black" size={11} style={{ textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Historique ({items.length})</TP>

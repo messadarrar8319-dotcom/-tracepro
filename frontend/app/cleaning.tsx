@@ -3,11 +3,13 @@ import { View, ScrollView, Pressable, KeyboardAvoidingView, Platform } from "rea
 import { useRouter, useFocusEffect } from "expo-router";
 import { Screen, TP, Header, Input, Btn, StatusPill } from "@/src/ui";
 import { api, theme } from "@/src/api";
+import { useNetwork } from "@/src/network";
 
 const ZONES = ["Plan de travail", "Chambre froide", "Machine", "Ustensiles", "Vitrine", "Sol", "Autre"];
 
 export default function Cleaning() {
   const router = useRouter();
+  const { submit: netSubmit, online } = useNetwork();
   const [items, setItems] = useState<any[]>([]);
   const [f, setF] = useState<any>({ zone: ZONES[0], operation_type: "Nettoyage + désinfection", status: "termine", comment: "" });
   const [busy, setBusy] = useState(false);
@@ -19,7 +21,7 @@ export default function Cleaning() {
 
   const submit = async () => {
     setBusy(true);
-    try { await api.createCleaning(f); await load(); }
+    try { await netSubmit("cleaning", f); await load(); }
     finally { setBusy(false); }
   };
 
@@ -40,7 +42,8 @@ export default function Cleaning() {
             </ScrollView>
             <Input label="Type d'opération" testID="clean-op" value={f.operation_type} onChangeText={(v) => setF({ ...f, operation_type: v })} />
             <Input label="Commentaire" testID="clean-comment" value={f.comment} onChangeText={(v) => setF({ ...f, comment: v })} />
-            <Btn label={busy ? "..." : "Enregistrer"} onPress={submit} disabled={busy} testID="clean-submit" />
+            {!online ? <TP size={12} weight="bold" color={theme.warning} style={{ marginBottom: 8 }}>⚠ Hors ligne — enregistré localement</TP> : null}
+            <Btn label={busy ? "..." : online ? "Enregistrer" : "Enregistrer (hors ligne)"} onPress={submit} disabled={busy} testID="clean-submit" />
           </View>
 
           <TP weight="black" size={11} style={{ textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Historique ({items.length})</TP>
