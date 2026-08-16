@@ -1,0 +1,53 @@
+{
+  "summary": "Backend + frontend testing for TRACEPRO MVP. Ran 24 pytest cases: 21 passed, 3 failed. Three real backend bugs identified: (1) GET /api/dashboard returns 500 due to naive-vs-aware datetime comparison, (2) POST /api/subscription/cancel returns 500 for the same reason inside compute_subscription_status, (3) POST /api/files/upload returns 500 because Emergent Object Storage /objstore/api/v1/storage/init responds 400 Bad Request. Frontend loads correctly, login works, dashboard, reception form, archives, and search screens render with proper testIDs. Dashboard KPIs display '0' everywhere because the underlying API errors out.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "GET /api/dashboard", "issue": "500 Internal Server Error - TypeError: can't compare offset-naive and offset-aware datetimes. MongoDB returns naive UTC datetimes for created_at while now() is timezone-aware. Comparison at server.py `in_window` helper (line 722) and elsewhere fails.", "priority": "CRITICAL"},
+      {"endpoint": "POST /api/subscription/cancel", "issue": "500 - same tz mismatch inside compute_subscription_status when comparing trial_end (naive from Mongo) with now() (aware). Reproduces on any fresh account after cancel where stripe_status='canceled' falls through to trial_end branch.", "priority": "CRITICAL"},
+      {"endpoint": "POST /api/files/upload", "issue": "500 with detail 'Échec de l'envoi: 400 Client Error: Bad Request for url: https://integrations.emergentagent.com/objstore/api/v1/storage/init'. The storage init call payload is likely missing required fields (e.g., app/bucket name). storage.py sends only {emergent_key}. All photo-upload flows (label, delivery, NC, losses) are blocked.", "priority": "CRITICAL"}
+    ],
+    "minor": [
+      {"endpoint": "GET /api/auth/me for seed user test@tracepro.fr", "issue": "subscription.days_left computed against trial_end that may already be past for the seeded account, resulting in dashboard chip 'ESSAI · -J'. Consider seeding a fresh trial_end or falling back to 'expire' with a clean label."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Dashboard trial chip", "issue": "Displays 'ESSAI · -J' when days_left is missing/negative; label is misleading.", "testID": "home-screen", "priority": "LOW"}
+    ],
+    "integration_issues": [
+      {"flow": "Dashboard load after login", "issue": "GET /api/dashboard returns 500 causing all KPIs to stay 0 and notifications empty. This is user-visible degradation.", "affected_testIDs": ["kpi-receptions-today", "kpi-active-batches", "kpi-dlc-soon", "kpi-dlc-expired", "kpi-temp-nc", "kpi-nc"]},
+      {"flow": "Photo capture in reception/NC/losses", "issue": "POST /api/files/upload always 500 due to Emergent Object Storage init failing. All screens that call upload will show error toast.", "affected_testIDs": ["rec-photo-label", "rec-photo-delivery"]}
+    ],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "props.pointerEvents deprecation warning", "issue": "Console warns: 'props.pointerEvents is deprecated. Use style.pointerEvents'. Likely in a View or TouchableOpacity. Non-blocking but should be migrated to style.pointerEvents."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/conftest.py",
+    "/app/backend/tests/test_tracepro_api.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Fix tz mismatch: normalize all datetimes retrieved from MongoDB to timezone-aware UTC before comparisons. Simplest: replace `created_at` comparisons with tz-aware coercion, e.g., `d = doc['created_at']; d = d.replace(tzinfo=timezone.utc) if d.tzinfo is None else d`. Apply in `/api/dashboard` (in_window helper and DLC parsing) and `compute_subscription_status` for trial_end. Alternatively store naive UTC everywhere and compare with `datetime.utcnow()`.",
+    "Fix Emergent Object Storage init: /objstore/api/v1/storage/init returns 400. Verify required payload fields (probably needs 'app_name' or similar in addition to emergent_key). Recommend using web_search or emergentintegrations helper if available. Currently blocks ALL photo uploads.",
+    "Refresh trial_end for seeded test@tracepro.fr account or add UI guard for negative days_left (show 'ESSAI · Expiré' instead of '-J').",
+    "Migrate props.pointerEvents to style.pointerEvents to remove RN 0.74 deprecation warning."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 840 lines - split into routers (auth, receptions, dashboard, subscription, files) for maintainability once bugs are fixed.",
+    "MongoDB datetimes are stored via `now()` (aware) but re-read as naive by motor unless codec_options set with tz_aware=True. Set `AsyncIOMotorClient(mongo_url, tz_aware=True)` to fix at source.",
+    "compute_subscription_status treats stripe_status 'canceled' by falling through to trial_end path - after cancel this may report 'expire' even if current_period_end is still in future; consider grace period logic.",
+    "/api/non-conformities PATCH uses `status` as query param, not body - functional but non-RESTful; consider a Pydantic body."
+  ],
+  "updated_files": [
+    "/app/backend/tests/conftest.py (new)",
+    "/app/backend/tests/test_tracepro_api.py (new)"
+  ],
+  "success_rate": {"backend": "87.5% (21/24)", "frontend": "~90% (login, dashboard render, nav all working; dashboard data blocked by API bug)"},
+  "seed_data_creation": "Tests create TEST_-prefixed accounts, receptions (TESTB*, TESTS*, TESTP*), temperature, cleaning, NC, losses via responsable test@tracepro.fr. Some data persists in DB.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Reuse /app/backend/tests/test_tracepro_api.py. After fixes retest TestDashboard, TestSubscription.test_subscribe_then_cancel, and TestFiles.test_upload_and_download. Then do frontend regression: login → dashboard shows real KPIs, reception photo upload works, subscription screen cancel/subscribe flow works. Test credentials: test@tracepro.fr / password123.",
+  "rca_of_issue": "Datetime bug RCA: `datetime.now(timezone.utc)` produces aware datetimes stored in MongoDB. Motor's default codec returns them as naive (no tz) unless tz_aware=True is set on the client. Any subsequent comparison against `now()` throws TypeError. Reproduces: login → GET /api/dashboard → 500. Fix options: (a) `AsyncIOMotorClient(mongo_url, tz_aware=True)`, or (b) coerce every read-back datetime: `dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt`. Storage upload RCA: init endpoint payload contract mismatch; server sends {emergent_key} only; the /objstore init API returns 400 indicating missing/invalid fields. Needs correct payload (likely include app_name or bucket)."
+}
