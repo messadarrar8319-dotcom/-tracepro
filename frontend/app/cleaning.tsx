@@ -4,12 +4,15 @@ import { useRouter, useFocusEffect } from "expo-router";
 import { Screen, TP, Header, Input, Btn, StatusPill } from "@/src/ui";
 import { api, theme } from "@/src/api";
 import { useNetwork } from "@/src/network";
+import { useAuth } from "@/src/auth";
 
 const ZONES = ["Plan de travail", "Chambre froide", "Machine", "Ustensiles", "Vitrine", "Sol", "Autre"];
 
 export default function Cleaning() {
   const router = useRouter();
   const { submit: netSubmit, online } = useNetwork();
+  const { user } = useAuth();
+  const isManager = user?.role === "responsable";
   const [items, setItems] = useState<any[]>([]);
   const [f, setF] = useState<any>({ zone: ZONES[0], operation_type: "Nettoyage + désinfection", status: "termine", comment: "" });
   const [busy, setBusy] = useState(false);
@@ -47,13 +50,23 @@ export default function Cleaning() {
           </View>
 
           <TP weight="black" size={11} style={{ textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Historique ({items.length})</TP>
-          {items.map((it) => (
+          {items.map((it) => {
+            const d = new Date(it.created_at);
+            return (
             <View key={it.id} style={{ borderWidth: 2, borderColor: theme.borderStrong, padding: 12, marginBottom: 6, borderLeftWidth: 8, borderLeftColor: theme.success }}>
               <TP weight="black">{it.zone} · {it.operation_type}</TP>
-              <TP size={11} color={theme.textMuted}>{new Date(it.created_at).toLocaleString("fr-FR")} · {it.created_by_name}</TP>
               {it.comment ? <TP size={12} style={{ marginTop: 4 }}>{it.comment}</TP> : null}
+              <View style={{ backgroundColor: theme.bg2, padding: 8, marginTop: 8, borderWidth: 1, borderColor: theme.border }}>
+                <TP size={11} weight="bold" testID={`clean-signature-${it.id}`}>✔ Contrôle effectué par {it.created_by_name} — {d.toLocaleDateString("fr-FR")} à {d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</TP>
+                {it.corrected ? <TP size={10} color={theme.warning} weight="bold" style={{ marginTop: 2 }}>⚠ Corrigé par {it.corrected_by_name}</TP> : null}
+              </View>
+              {isManager && (
+                <Pressable testID={`clean-correct-${it.id}`} onPress={() => router.push({ pathname: "/correct", params: { ctype: "cleaning", cid: it.id, label: `${it.zone} · ${it.operation_type}`, fields: "operation_type,status,comment" } })} style={{ marginTop: 8, alignSelf: "flex-start", borderWidth: 2, borderColor: theme.borderStrong, paddingHorizontal: 10, paddingVertical: 6 }}>
+                  <TP weight="bold" size={11}>CORRIGER</TP>
+                </Pressable>
+              )}
             </View>
-          ))}
+          );})}
         </ScrollView>
       </KeyboardAvoidingView>
     </Screen>

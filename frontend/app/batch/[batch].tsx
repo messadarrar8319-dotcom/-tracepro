@@ -19,14 +19,14 @@ export default function BatchDetail() {
 
   const exportPdf = async () => {
     if (!batch) return;
-    const { url, token } = await api.batchPdfUrl(batch);
-    if (Platform.OS === "web") window.open(`${url}?token=${token}`, "_blank");
+    const url = await api.batchPdfUrl(batch);
+    if (Platform.OS === "web") window.open(url, "_blank");
     else Linking.openURL(url);
   };
 
-  const exportCsv = () => {
+  const exportCsv = async () => {
     if (!batch) return;
-    const url = api.csvBatchUrl(batch);
+    const url = await api.csvBatchUrl(batch);
     if (Platform.OS === "web") window.open(url, "_blank");
     else Linking.openURL(url);
   };

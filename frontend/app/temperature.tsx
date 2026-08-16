@@ -4,12 +4,15 @@ import { useRouter, useFocusEffect } from "expo-router";
 import { Screen, TP, Header, Input, Btn, StatusPill } from "@/src/ui";
 import { api, theme } from "@/src/api";
 import { useNetwork } from "@/src/network";
+import { useAuth } from "@/src/auth";
 
 const ZONES = ["Chambre froide", "Congélateur", "Vitrine", "Réserve", "Autre"];
 
 export default function Temperature() {
   const router = useRouter();
   const { submit: netSubmit, online } = useNetwork();
+  const { user } = useAuth();
+  const isManager = user?.role === "responsable";
   const [items, setItems] = useState<any[]>([]);
   const [f, setF] = useState<any>({ zone: "", zone_type: "chambre_froide", temperature: "", conforming: true, comment: "" });
   const [busy, setBusy] = useState(false);
@@ -72,16 +75,26 @@ export default function Temperature() {
 
           <TP weight="black" size={11} style={{ textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Historique ({items.length})</TP>
           {items.length === 0 && <TP color={theme.textMuted}>Aucun enregistrement.</TP>}
-          {items.map((it) => (
+          {items.map((it) => {
+            const d = new Date(it.created_at);
+            return (
             <View key={it.id} style={{ borderWidth: 2, borderColor: theme.borderStrong, padding: 12, marginBottom: 6, borderLeftWidth: 8, borderLeftColor: it.conforming ? theme.success : theme.error }}>
               <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
                 <TP weight="black">{it.zone}</TP>
                 <TP weight="black" size={18} color={it.conforming ? theme.success : theme.error}>{it.temperature}°C</TP>
               </View>
-              <TP size={11} color={theme.textMuted}>{new Date(it.created_at).toLocaleString("fr-FR")} · {it.created_by_name}</TP>
               {it.comment ? <TP size={12} style={{ marginTop: 4 }}>{it.comment}</TP> : null}
+              <View style={{ backgroundColor: theme.bg2, padding: 8, marginTop: 8, borderWidth: 1, borderColor: theme.border }}>
+                <TP size={11} weight="bold" testID={`temp-signature-${it.id}`}>✔ Contrôle effectué par {it.created_by_name} — {d.toLocaleDateString("fr-FR")} à {d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</TP>
+                {it.corrected ? <TP size={10} color={theme.warning} weight="bold" style={{ marginTop: 2 }}>⚠ Corrigé par {it.corrected_by_name}</TP> : null}
+              </View>
+              {isManager && (
+                <Pressable testID={`temp-correct-${it.id}`} onPress={() => router.push({ pathname: "/correct", params: { ctype: "temperatures", cid: it.id, label: `${it.zone} · ${it.temperature}°C`, fields: "temperature,conforming,comment" } })} style={{ marginTop: 8, alignSelf: "flex-start", borderWidth: 2, borderColor: theme.borderStrong, paddingHorizontal: 10, paddingVertical: 6 }}>
+                  <TP weight="bold" size={11}>CORRIGER</TP>
+                </Pressable>
+              )}
             </View>
-          ))}
+          );})}
         </ScrollView>
       </KeyboardAvoidingView>
     </Screen>

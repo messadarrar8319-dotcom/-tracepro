@@ -43,6 +43,13 @@ Comptes, tableau de bord, réceptions, lots/traçabilité, scanner, recherche, D
 - ✅ **Export CSV**: réceptions, températures, nettoyage, non-conformités, pertes + historique de lot, avec filtres (date, produit, lot, fournisseur), isolation stricte par entreprise
 - ✅ Backend: 46/46 tests pytest verts (24 régression + 22 nouveaux)
 
+## Implemented (Itération 3 — 2026-08-16)
+- ✅ **Rappels mobiles**: notifications locales programmées (expo-notifications, déclencheurs quotidiens) pour températures/nettoyage/contrôles personnalisés, aux horaires configurés par le responsable, même app fermée (sur build/appareil réel). Gestion des permissions (refus → ouvrir réglages). Anti-doublon (annulation + reprogrammation).
+- ✅ **Signature de contrôle**: chaque contrôle (température, nettoyage) enregistre une signature (utilisateur, entreprise, type, date/heure, statut). Affichage « Contrôle effectué par [Nom] — [date] à [heure] ». Enregistrements immuables sauf correction autorisée (responsable) qui crée un historique d'audit (ancienne/nouvelle valeur + motif).
+- ✅ **Export PDF global « Dossier de contrôle »**: le responsable choisit une période + sections (températures, nettoyage, non-conformités, réceptions, traçabilité, pertes) → 1 PDF (nom entreprise, période, date de génération, enregistrements + auteur de chaque contrôle), isolé par entreprise.
+- ✅ Auth des téléchargements via `?token=` (header OU query) pour PDF/CSV/dossier
+- ✅ Backend: 84/84 tests pytest verts
+
 ## Backlog (P1/P2)
 - P1: Mode hors connexion + synchronisation automatique
 - P1: Export CSV

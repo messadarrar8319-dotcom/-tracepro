@@ -84,6 +84,25 @@ async def require_manager(user=Depends(current_user)):
     return user
 
 
+async def current_user_flex(
+    header_token: Annotated[Optional[str], Depends(oauth2)] = None,
+    token: Optional[str] = Query(None),
+):
+    """Auth from Authorization header OR ?token= query param (for file downloads
+    opened via window.open / Linking which cannot set headers)."""
+    tok = header_token or token
+    if not tok:
+        raise HTTPException(401, "Non authentifié")
+    try:
+        payload = jwt.decode(tok, JWT_SECRET, algorithms=[JWT_ALGO])
+        user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0})
+        if not user:
+            raise HTTPException(401, "Compte introuvable")
+        return user
+    except jwt.PyJWTError:
+        raise HTTPException(401, "Token invalide")
+
+
 # ---------------- Models ----------------
 class RegisterIn(BaseModel):
     company_name: str
@@ -183,6 +202,11 @@ class ReminderConfigIn(BaseModel):
     custom_controls: List[dict] = []  # [{"name": str, "time": "HH:MM"}]
 
 
+class CorrectionIn(BaseModel):
+    changes: dict
+    reason: str = Field(min_length=1)
+
+
 class ProfileUpdate(BaseModel):
     company_name: Optional[str] = None
     business_type: Optional[str] = None
@@ -214,10 +238,11 @@ async def get_org(org_id: str) -> dict:
     return org
 
 
-async def create_doc(collection, body, user) -> dict:
+async def create_doc(collection, body, user, control_type=None) -> dict:
     """Insert a document with offline idempotency.
     If body carries a `client_id` that already exists for this org, the existing
-    document is returned instead of creating a duplicate (safe for offline sync)."""
+    document is returned instead of creating a duplicate (safe for offline sync).
+    When `control_type` is given, an immutable signature block is attached."""
     data = body.model_dump()
     client_id = data.pop("client_id", None)
     doc_id = client_id or str(uuid.uuid4())
@@ -225,14 +250,25 @@ async def create_doc(collection, body, user) -> dict:
         existing = await collection.find_one({"id": doc_id, "org_id": user["org_id"]}, {"_id": 0})
         if existing:
             return existing
+    ts = now()
     doc = {
         "id": doc_id,
         "org_id": user["org_id"],
         "created_by": user["id"],
         "created_by_name": user["name"],
-        "created_at": now(),
+        "created_at": ts,
         **data,
     }
+    if control_type:
+        doc["signature"] = {
+            "user_id": user["id"],
+            "user_name": user["name"],
+            "org_id": user["org_id"],
+            "control_type": control_type,
+            "signed_at": ts.isoformat(),
+            "status": data.get("status") or "effectue",
+            "comment": data.get("comment"),
+        }
     await collection.insert_one(doc)
     doc.pop("_id", None)
     return doc
@@ -567,7 +603,7 @@ async def get_batch(batch_number: str, user=Depends(current_user)):
 # ==================== TEMPERATURES ====================
 @api.post("/temperatures")
 async def create_temperature(body: TemperatureIn, user=Depends(current_user)):
-    return await create_doc(db.temperatures, body, user)
+    return await create_doc(db.temperatures, body, user, control_type="temperature")
 
 
 @api.get("/temperatures")
@@ -579,7 +615,7 @@ async def list_temperatures(user=Depends(current_user), limit: int = 200):
 # ==================== CLEANING ====================
 @api.post("/cleaning")
 async def create_cleaning(body: CleaningIn, user=Depends(current_user)):
-    return await create_doc(db.cleaning, body, user)
+    return await create_doc(db.cleaning, body, user, control_type="cleaning")
 
 
 @api.get("/cleaning")
@@ -923,7 +959,7 @@ async def dashboard(user=Depends(current_user)):
 
 # ==================== PDF EXPORT ====================
 @api.get("/export/batch/{batch_number}")
-async def export_batch_pdf(batch_number: str, user=Depends(current_user)):
+async def export_batch_pdf(batch_number: str, user=Depends(current_user_flex)):
     data = await get_batch(batch_number, user)
     org = await get_org(user["org_id"])
 
@@ -1013,7 +1049,7 @@ def _build_csv(rows: list, columns: list) -> BytesIO:
 @api.get("/export/csv/{doc_type}")
 async def export_csv(
     doc_type: str,
-    user=Depends(current_user),
+    user=Depends(current_user_flex),
     date_from: Optional[str] = Query(None),
     date_to: Optional[str] = Query(None),
     product: Optional[str] = Query(None),
@@ -1050,7 +1086,7 @@ async def export_csv(
 
 
 @api.get("/export/csv-batch/{batch_number}")
-async def export_batch_csv(batch_number: str, user=Depends(current_user)):
+async def export_batch_csv(batch_number: str, user=Depends(current_user_flex)):
     """Full lot history as CSV (receptions + losses + non-conformities)."""
     data = await get_batch(batch_number, user)
     rows = []
@@ -1064,6 +1100,176 @@ async def export_batch_csv(batch_number: str, user=Depends(current_user)):
         })
     buf = _build_csv(rows, ["date", "type", "title", "detail", "user"])
     return StreamingResponse(buf, media_type="text/csv", headers={"Content-Disposition": f"attachment; filename=lot-{batch_number}.csv"})
+
+
+# ==================== CONTROL SIGNATURE / CORRECTIONS ====================
+CORRECTABLE = {
+    "temperatures": "temperatures",
+    "cleaning": "cleaning",
+    "non_conformities": "non_conformities",
+    "receptions": "receptions",
+    "losses": "losses",
+}
+PROTECTED_FIELDS = {"id", "org_id", "created_by", "created_by_name", "created_at", "signature"}
+
+
+@api.post("/controls/{ctype}/{cid}/correct")
+async def correct_control(ctype: str, cid: str, body: CorrectionIn, user=Depends(require_manager)):
+    """Authorized correction of a signed control. The record stays immutable except
+    through this endpoint, which records an audit history entry (old + new values)."""
+    if ctype not in CORRECTABLE:
+        raise HTTPException(400, "Type de contrôle invalide")
+    coll = db[CORRECTABLE[ctype]]
+    doc = await coll.find_one({"id": cid, "org_id": user["org_id"]}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Enregistrement introuvable")
+    changes = {k: v for k, v in (body.changes or {}).items() if k not in PROTECTED_FIELDS}
+    if not changes:
+        raise HTTPException(400, "Aucune modification autorisée fournie")
+    old_values = {k: doc.get(k) for k in changes}
+    audit = {
+        "id": str(uuid.uuid4()),
+        "org_id": user["org_id"],
+        "collection": ctype,
+        "record_id": cid,
+        "changed_by": user["id"],
+        "changed_by_name": user["name"],
+        "changed_at": now(),
+        "reason": body.reason,
+        "old_values": old_values,
+        "new_values": changes,
+    }
+    await db.control_audits.insert_one(audit)
+    await coll.update_one(
+        {"id": cid, "org_id": user["org_id"]},
+        {"$set": {**changes, "corrected": True, "corrected_at": now(), "corrected_by_name": user["name"]}},
+    )
+    return {"ok": True, "audit_id": audit["id"]}
+
+
+@api.get("/controls/{ctype}/{cid}/audit")
+async def control_audit(ctype: str, cid: str, user=Depends(current_user)):
+    if ctype not in CORRECTABLE:
+        raise HTTPException(400, "Type de contrôle invalide")
+    docs = await db.control_audits.find(
+        {"org_id": user["org_id"], "collection": ctype, "record_id": cid}, {"_id": 0}
+    ).sort("changed_at", -1).to_list(100)
+    return docs
+
+
+# ==================== GLOBAL PDF DOSSIER ====================
+def _date_range_query(org_id: str, date_from: Optional[str], date_to: Optional[str]) -> dict:
+    q: dict = {"org_id": org_id}
+    rng = {}
+    if date_from:
+        rng["$gte"] = datetime.strptime(date_from, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    if date_to:
+        rng["$lt"] = datetime.strptime(date_to, "%Y-%m-%d").replace(tzinfo=timezone.utc) + timedelta(days=1)
+    if rng:
+        q["created_at"] = rng
+    return q
+
+
+def _fmt_dt(v):
+    if isinstance(v, datetime):
+        return v.strftime("%d/%m/%Y %H:%M")
+    return str(v or "")
+
+
+@api.get("/export/dossier")
+async def export_dossier(
+    user=Depends(current_user_flex),
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    sections: str = Query("temperatures,cleaning,non_conformities,receptions,traceability,losses"),
+):
+    if user["role"] != "responsable":
+        raise HTTPException(403, "Réservé au responsable")
+    org = await get_org(user["org_id"])
+    try:
+        query = _date_range_query(user["org_id"], date_from, date_to)
+    except Exception:
+        raise HTTPException(400, "Dates invalides (YYYY-MM-DD)")
+    wanted = [s.strip() for s in sections.split(",") if s.strip()]
+
+    buf = BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=1.2 * cm, rightMargin=1.2 * cm, topMargin=1.5 * cm, bottomMargin=1.5 * cm)
+    styles = getSampleStyleSheet()
+    h1 = ParagraphStyle("h1", parent=styles["Heading1"], textColor=colors.HexColor("#E65100"), fontSize=22)
+    h2 = ParagraphStyle("h2", parent=styles["Heading2"], textColor=colors.HexColor("#18181B"), fontSize=14)
+    small = ParagraphStyle("small", parent=styles["Normal"], fontSize=9)
+    story = []
+    story.append(Paragraph("TRACEPRO — Dossier de contrôle", h1))
+    story.append(Paragraph(f"<b>{org.get('company_name','')}</b> — {org.get('business_type','')}", styles["Normal"]))
+    story.append(Paragraph(f"{org.get('address','')} · {org.get('phone','')}", small))
+    period_to = date_to or "aujourd'hui"
+    period = f"{date_from or 'début'} → {period_to}"
+    story.append(Paragraph(f"<b>Période :</b> {period}", styles["Normal"]))
+    story.append(Paragraph(f"<b>Généré le :</b> {now().strftime('%d/%m/%Y %H:%M')}", styles["Normal"]))
+    story.append(Spacer(1, 14))
+
+    def add_table(title, columns, rows):
+        story.append(Paragraph(title, h2))
+        if not rows:
+            story.append(Paragraph("Aucun enregistrement sur la période.", small))
+            story.append(Spacer(1, 10))
+            return
+        table_data = [columns] + rows
+        t = Table(table_data, repeatRows=1)
+        t.setStyle(TableStyle([
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#18181B")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 7),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F4F4F5")]),
+            ("PADDING", (0, 0), (-1, -1), 3),
+        ]))
+        story.append(t)
+        story.append(Spacer(1, 14))
+
+    if "temperatures" in wanted:
+        rows = await db.temperatures.find(query, {"_id": 0}).sort("created_at", 1).to_list(2000)
+        add_table("Relevés de température", ["Date/Heure", "Zone", "Type", "°C", "Conforme", "Effectué par"],
+                  [[_fmt_dt(r.get("created_at")), r.get("zone", ""), r.get("zone_type", ""), str(r.get("temperature", "")), "Oui" if r.get("conforming") else "Non", r.get("created_by_name", "")] for r in rows])
+
+    if "cleaning" in wanted:
+        rows = await db.cleaning.find(query, {"_id": 0}).sort("created_at", 1).to_list(2000)
+        add_table("Nettoyage & désinfection", ["Date/Heure", "Zone", "Opération", "Statut", "Effectué par"],
+                  [[_fmt_dt(r.get("created_at")), r.get("zone", ""), r.get("operation_type", ""), r.get("status", ""), r.get("created_by_name", "")] for r in rows])
+
+    if "non_conformities" in wanted:
+        rows = await db.non_conformities.find(query, {"_id": 0}).sort("created_at", 1).to_list(2000)
+        add_table("Non-conformités", ["Date/Heure", "Problème", "Concerné", "Lot", "Statut", "Effectué par"],
+                  [[_fmt_dt(r.get("created_at")), r.get("problem_type", ""), r.get("concerned_item", ""), r.get("batch_number", "") or "-", r.get("status", ""), r.get("created_by_name", "")] for r in rows])
+
+    if "receptions" in wanted:
+        rows = await db.receptions.find(query, {"_id": 0}).sort("created_at", 1).to_list(2000)
+        add_table("Réceptions", ["Date/Heure", "Produit", "Fournisseur", "Lot", "DLC", "Qté", "Conforme", "Effectué par"],
+                  [[_fmt_dt(r.get("created_at")), r.get("product", ""), r.get("supplier", ""), r.get("batch_number", ""), r.get("dlc", "") or "-", f"{r.get('quantity','')}{r.get('unit','')}", "Oui" if r.get("conforming") else "Non", r.get("created_by_name", "")] for r in rows])
+
+    if "losses" in wanted:
+        rows = await db.losses.find(query, {"_id": 0}).sort("created_at", 1).to_list(2000)
+        add_table("Pertes", ["Date/Heure", "Produit", "Lot", "Qté", "Motif", "Valeur €", "Effectué par"],
+                  [[_fmt_dt(r.get("created_at")), r.get("product", ""), r.get("batch_number", "") or "-", f"{r.get('quantity','')}{r.get('unit','')}", r.get("reason", ""), str(r.get("estimated_value", "") or "-"), r.get("created_by_name", "")] for r in rows])
+
+    if "traceability" in wanted:
+        receptions = await db.receptions.find(query, {"_id": 0}).sort("created_at", 1).to_list(2000)
+        batches = {}
+        for r in receptions:
+            b = r.get("batch_number")
+            if b and b not in batches:
+                batches[b] = r
+        add_table("Traçabilité des lots", ["Lot", "Produit", "Fournisseur", "Réception", "DLC", "Qté reçue"],
+                  [[b, r.get("product", ""), r.get("supplier", ""), r.get("reception_date", ""), r.get("dlc", "") or "-", f"{r.get('quantity','')}{r.get('unit','')}"] for b, r in batches.items()])
+
+    if len(story) <= 6:
+        story.append(Paragraph("Aucune section sélectionnée.", small))
+
+    doc.build(story)
+    buf.seek(0)
+    return StreamingResponse(buf, media_type="application/pdf", headers={"Content-Disposition": "attachment; filename=dossier-controle.pdf"})
 
 
 # ==================== ARCHIVES ====================

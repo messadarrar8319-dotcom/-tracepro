@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import { View, ScrollView, Pressable, KeyboardAvoidingView, Platform } from "react-native";
+import { View, ScrollView, Pressable, KeyboardAvoidingView, Platform, Linking } from "react-native";
 import { useRouter } from "expo-router";
-import { Screen, TP, Header, Input, Btn, Divider } from "@/src/ui";
+import { Screen, TP, Header, Input, Btn, Divider, StatusPill } from "@/src/ui";
 import { api, theme } from "@/src/api";
 import { useAuth } from "@/src/auth";
+import * as Notif from "@/src/notifications";
 
 const TIME_OPTIONS = ["06:00", "08:00", "10:00", "12:00", "14:00", "16:00", "18:00", "20:00", "22:00"];
 
@@ -15,10 +16,43 @@ export default function Reminders() {
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
   const [newCtrl, setNewCtrl] = useState({ name: "", time: "20:00" });
+  const [permStatus, setPermStatus] = useState<string>("undetermined");
+  const [canAsk, setCanAsk] = useState(true);
+  const [scheduled, setScheduled] = useState(0);
+  const isWeb = Platform.OS === "web";
 
   useEffect(() => {
-    (async () => { try { setCfg(await api.remindersConfig()); } catch {} })();
+    (async () => {
+      try { setCfg(await api.remindersConfig()); } catch {}
+      if (!isWeb) {
+        try {
+          const p = await Notif.getPermissionStatus();
+          setPermStatus(p.status);
+          setCanAsk(p.canAskAgain);
+          setScheduled(await Notif.getScheduledCount());
+        } catch {}
+      }
+    })();
   }, []);
+
+  const syncNotifications = async (config: any) => {
+    if (isWeb) return;
+    let p = await Notif.getPermissionStatus();
+    if (p.status !== "granted" && p.canAskAgain) {
+      p = await Notif.requestPermission();
+    }
+    setPermStatus(p.status);
+    setCanAsk(p.canAskAgain);
+    if (p.status === "granted") {
+      const n = await Notif.rescheduleReminders(config);
+      setScheduled(n);
+    }
+  };
+
+  const enableNotifications = async () => {
+    if (!cfg) return;
+    await syncNotifications(cfg);
+  };
 
   if (!cfg) return <Screen><Header title="Rappels" onBack={() => router.back()} /><View style={{ padding: 16 }}><TP>Chargement…</TP></View></Screen>;
 
@@ -41,6 +75,7 @@ export default function Reminders() {
       const saved = await api.saveRemindersConfig(body);
       setCfg(saved);
       setMsg("Enregistré ✓");
+      await syncNotifications(saved);
     } catch (e: any) { setMsg(e.message); }
     finally { setBusy(false); }
   };
@@ -64,6 +99,32 @@ export default function Reminders() {
               <TP size={12} weight="bold">Seul le responsable peut modifier les rappels.</TP>
             </View>
           )}
+
+          {/* Notifications status */}
+          <View style={{ borderWidth: 2, borderColor: theme.borderStrong, padding: 16, marginBottom: 16, backgroundColor: theme.dark }} testID="notif-status-card">
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+              <TP weight="black" size={14} color="#FFF">Notifications mobiles</TP>
+              <StatusPill
+                label={isWeb ? "Mobile requis" : permStatus === "granted" ? "Activées" : permStatus === "denied" ? "Refusées" : "À activer"}
+                tone={permStatus === "granted" ? "success" : permStatus === "denied" ? "danger" : "warning"}
+              />
+            </View>
+            {isWeb ? (
+              <TP size={12} color="#FFF" style={{ marginTop: 8 }}>Les rappels s'affichent sur mobile (Expo Go / build), pas dans l'aperçu web.</TP>
+            ) : permStatus === "granted" ? (
+              <TP size={12} color="#FFF" style={{ marginTop: 8 }}>{scheduled} rappel(s) programmé(s). Vous serez notifié même app fermée.</TP>
+            ) : permStatus === "denied" && !canAsk ? (
+              <View style={{ marginTop: 8 }}>
+                <TP size={12} color="#FFF" style={{ marginBottom: 8 }}>Notifications refusées. Activez-les dans les réglages du téléphone.</TP>
+                <Btn label="Ouvrir les réglages" variant="secondary" small onPress={() => Linking.openSettings()} testID="notif-open-settings" />
+              </View>
+            ) : (
+              <View style={{ marginTop: 8 }}>
+                <TP size={12} color="#FFF" style={{ marginBottom: 8 }}>Autorisez les notifications pour recevoir les rappels de contrôle.</TP>
+                <Btn label="Activer les notifications" variant="secondary" small onPress={enableNotifications} testID="notif-enable" />
+              </View>
+            )}
+          </View>
 
           {/* Temperature */}
           <View style={{ borderWidth: 2, borderColor: theme.borderStrong, padding: 16, marginBottom: 16 }}>

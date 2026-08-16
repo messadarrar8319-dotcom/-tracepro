@@ -80,9 +80,15 @@ export default function Settings() {
           )}
         </View>
 
-        {/* Users */}
+        {/* Rappels & controls */}
         <TP weight="black" size={11} style={{ textTransform: "uppercase", letterSpacing: 1, marginTop: 16, marginBottom: 8 }}>Rappels & contrôles</TP>
         <Btn label="Configurer les rappels quotidiens" variant="ghost" onPress={() => router.push("/reminders")} testID="goto-reminders" />
+        {isManager && (
+          <>
+            <View style={{ height: 8 }} />
+            <Btn label="Générer le dossier de contrôle" variant="ghost" onPress={() => router.push("/dossier")} testID="goto-dossier" />
+          </>
+        )}
 
         {/* Users */}
         <TP weight="black" size={11} style={{ textTransform: "uppercase", letterSpacing: 1, marginTop: 16, marginBottom: 8 }}>Utilisateurs ({users.length})</TP>

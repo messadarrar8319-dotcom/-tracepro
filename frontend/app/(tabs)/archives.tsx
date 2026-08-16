@@ -30,14 +30,15 @@ export default function Archives() {
   };
 
   const exportPdf = async (batch: string) => {
-    const { url, token } = await api.batchPdfUrl(batch);
-    openUrl(Platform.OS === "web" ? `${url}?token=${token}` : url);
+    const url = await api.batchPdfUrl(batch);
+    openUrl(url);
   };
 
-  const exportCsv = () => {
+  const exportCsv = async () => {
     const clean: Record<string, string> = {};
     Object.entries(filters).forEach(([k, v]) => { if (v) clean[k] = v; });
-    openUrl(api.csvUrl(tab, clean));
+    const url = await api.csvUrl(tab, clean);
+    openUrl(url);
   };
 
   return (

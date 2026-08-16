@@ -42,7 +42,8 @@
         }
       ],
       ["expo-camera", { "cameraPermission": "Scanner codes-barres et QR codes." }],
-      ["expo-image-picker", { "photosPermission": "Ajouter des photos aux réceptions." }]
+      ["expo-image-picker", { "photosPermission": "Ajouter des photos aux réceptions." }],
+      ["expo-notifications", { "color": "#E65100" }]
     ],
     "experiments": {
       "typedRoutes": true

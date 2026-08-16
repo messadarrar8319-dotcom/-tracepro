@@ -1,0 +1,46 @@
+{
+  "summary": "Iteration 5 follow-up FIX VERIFICATION for the export-auth gap: 84/84 backend pytest tests pass (65 previous + 19 new in test_export_query_token.py). All four export endpoints (/api/export/dossier, /api/export/csv/{type}, /api/export/csv-batch/{batch}, /api/export/batch/{batch}) now accept auth via EITHER the Authorization header OR the ?token= query param via the new current_user_flex dependency (server.py:87-103). Verified with query token=200 (%PDF- or CSV), header still works=200, no token=401, and dossier employe=403. Traceability section is now in dossier default sections list and renders. Frontend sanity on mobile 390x844 with test@tracepro.fr/password123: login OK; archives CSV button opens URL /api/export/csv/receptions?token=eyJ... (OK); dossier Générer opens /api/export/dossier?sections=...&token=eyJ... (OK); batch screen PDF opens /api/export/batch/{batch}?token=eyJ... and CSV opens /api/export/csv-batch/{batch}?token=eyJ... (OK). No red screens or blocking JS errors — only carry-over expo-notifications warning and pre-login 401 (expected).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/statistics (test only)", "issue": "test_iteration3_features.py::test_statistics_reflects_new_data is flaky when pytest runs with default xdist parallelism because parallel workers create receptions concurrently, so the +1 delta assertion sometimes sees +2. Passes 100% when run with -n 0. Preexisting, not caused by this iteration."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "expo-notifications on web", "issue": "Warning '[expo-notifications] Listening to push token changes is not yet fully supported on web...' — expected on web preview; already gated by Platform.OS==='web' in /app/frontend/app/reminders.tsx. Non-blocking."},
+      {"component": "3rd-party lib (gesture-handler/svg/gifted-charts)", "issue": "Console warning 'props.pointerEvents is deprecated. Use style.pointerEvents' originates from a 3rd-party library, not app code. Non-blocking, carry-over from iteration 1/3/4."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_export_query_token.py",
+    "/app/backend/tests/test_iteration4_features.py",
+    "/app/backend/tests/test_iteration3_features.py",
+    "/app/backend/tests/test_tracepro_api.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "(Optional) Fix flaky test_statistics_reflects_new_data by using an org-isolated fresh org+session for the delta assertion, so parallel workers don't pollute the same org's reception count.",
+    "(Optional, carry-over) server.py now 1313 lines — consider splitting into routers (auth, controls, exports, reminders).",
+    "(Optional) The ?token= query pattern puts the JWT in URL / server access logs / browser history. Acceptable for MVP but a follow-up should mint a short-lived, single-use download token (or use a Set-Cookie httpOnly session for the export routes) so the long-lived JWT is not exposed in URL logs."
+  ],
+  "critical_code_review_comments": [
+    "server.py:87-103 current_user_flex correctly reads header token via OAuth2PasswordBearer(auto_error=False) then falls back to ?token= query — clean implementation, auth_error=False on the header prevents the header-missing path from short-circuiting the query fallback.",
+    "server.py:962, 1049, 1088, 1179 all four export routes now depend on current_user_flex; require_manager was intentionally NOT reused on dossier — instead an explicit user['role'] != 'responsable' check at line 1186 preserves the 403-for-employe contract while allowing query-token auth.",
+    "server.py:1184 default sections string now includes 'traceability' — matches the frontend dossier.tsx checkbox list (6 sections). Backend section renderer (server.py:1257+) already had traceability logic since iteration 4.",
+    "api.ts:90-109 batchPdfUrl / csvUrl / csvBatchUrl / dossierUrl are now async, correctly await readToken() and append token=<jwt> as a query param. csvUrl and dossierUrl merge existing filters + token via a single serializer. No double-encoding.",
+    "dossier.tsx / archives.tsx / batch/[batch].tsx correctly await the async URL helpers before calling window.open / Linking.openURL — verified via live browser test (no undefined/Promise-string URL leaked)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_export_query_token.py (new — 19 tests covering query-token, header-still-works, no-auth-401, employe-403 for all 4 export routes)"
+  ],
+  "success_rate": {"backend": "100% (84/84 with -n 0; 83/84 with default xdist due to pre-existing flaky statistics test)", "frontend": "100% of critical export-URL flows verified (archives CSV, dossier PDF, batch PDF, batch CSV all include ?token=)"},
+  "seed_data_creation": "TEST_sup_*/TESTB* receptions created by test_export_query_token.py for csv-batch/batch PDF flows. All prefixed for cleanup.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Export auth accepts header token OR ?token= query. Frontend api.ts helpers for exports are ASYNC — always await them. When testing window.open captures on web preview, use page.add_init_script to monkey-patch window.open BEFORE navigation (per-goto monkey patches get wiped). Sample batch to test: pull one from GET /api/receptions?limit=1. Flaky statistics test needs isolation — run pytest -n 0 or fix by creating a fresh org.",
+  "rca_of_issue": "Prior iteration's window.open() call could not send the Authorization header, so exports returned 401 in the browser. FIX: (1) new backend dep current_user_flex reads either the header or ?token= query, applied to all 4 export routes; (2) frontend URL helpers now await readToken() and embed ?token= in the query string. Verified end-to-end: URLs built by the app include the token, and hitting them with only ?token= returns the file; hitting them with no auth at all returns 401; dossier still returns 403 for employe even via ?token=."
+}
