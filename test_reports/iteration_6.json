@@ -1,0 +1,41 @@
+{
+  "summary": "REGRESSION PASS after removal of react-native-linear-gradient (Expo Go compatibility). Backend: 84/84 pytest tests pass (test_tracepro_api.py + test_iteration3_features.py + test_iteration4_features.py + test_export_query_token.py) with -n 0 in 10.57s. Frontend on mobile 390x844 with test@tracepro.fr/password123: login OK; /statistics renders (testID statistics-screen visible) with 22 SVGs and 24 svg circles/paths — bar charts (Réceptions/semaine, Pertes €/semaine) render with orange/red gradient fills confirming gifted-charts successfully falls back to expo-linear-gradient. All other screens render without red-screen: dashboard (index), /temperature, /cleaning, /reminders, /dossier, /archives. No JS runtime errors, no red-screen. Only carry-over warnings from previous iterations: expo-notifications web-not-supported (already gated), 3rd-party 'props.pointerEvents is deprecated' and 'style.resizeMode is deprecated' — all non-blocking and pre-existing. Verified react-native-linear-gradient is absent from node_modules and package.json; expo-linear-gradient@15.0.8 is installed. Safe to ship for Expo Go testing.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "expo-notifications on web", "issue": "Carry-over warning '[expo-notifications] Listening to push token changes is not yet fully supported on web...' — already gated by Platform.OS==='web' in /app/frontend/app/reminders.tsx. Non-blocking on web preview; irrelevant to Expo Go on device."},
+      {"component": "react-native-web internals (3rd-party)", "issue": "Carry-over web-only console warnings 'props.pointerEvents is deprecated. Use style.pointerEvents' and 'Image: style.resizeMode is deprecated. Please use props.resizeMode.' Origin is react-native-web/gifted-charts internals, not app code. Non-blocking."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_tracepro_api.py",
+    "/app/backend/tests/test_iteration3_features.py",
+    "/app/backend/tests/test_iteration4_features.py",
+    "/app/backend/tests/test_export_query_token.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "None required for this iteration. Dependency removal is safe — proceed with Expo Go publish/QR test.",
+    "(Carry-over, optional) Flaky test_iteration3_features.py::test_statistics_reflects_new_data under xdist parallelism — run with -n 0 or fix by isolating a fresh org per assertion.",
+    "(Carry-over, optional) server.py is 1300+ lines; consider splitting into routers.",
+    "(Carry-over, optional) Replace long-lived JWT in ?token= query with short-lived download token."
+  ],
+  "critical_code_review_comments": [
+    "package.json: react-native-linear-gradient is fully removed (confirmed grep across /app/frontend/app and node_modules — REMOVED). expo-linear-gradient@15.0.8 present. gifted-charts@1.4.78 uses optional peer resolution and will pick expo-linear-gradient at runtime — no import site in app code references either module directly.",
+    "No changes required in /app/frontend/app/statistics.tsx — it renders BarChart and PieChart components from react-native-gifted-charts, and the 22 <svg> nodes + 24 svg circles/paths observed in the DOM confirm charts mount and paint under the gradient fallback.",
+    "backend/server.py untouched this iteration — 84/84 tests confirm no regressions in auth, receptions, temperatures, cleaning, NC, batches, dossier, exports (header + ?token= query), statistics, reminders."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (84/84)", "frontend": "100% (statistics + 6 other screens render, no red-screen, no runtime errors)"},
+  "seed_data_creation": "None new. Pre-existing TEST_*/TESTB* data from prior iterations still present and used for backend test fixtures.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "For Expo Go regression after gradient package removal: gifted-charts falls back to expo-linear-gradient. Verify via document.querySelectorAll('svg').length > 0 on /statistics (expect 20+). Note ScrollView on RN web does NOT respond to window.scrollBy — if you need to reveal off-screen pie charts on statistics, dispatch scroll on the inner ScrollView node or just trust the SVG count. Dashboard testID for index route is not 'dashboard-screen' — after login user lands at '/' where the dashboard renders inline; validate via visible text 'TABLEAU DE BORD' / 'RÉCEPTIONS' cards rather than the testID.",
+  "rca_of_issue": "N/A — regression-only iteration. No bugs found."
+}
