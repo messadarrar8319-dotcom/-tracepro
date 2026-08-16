@@ -1,16 +1,19 @@
 import { useEffect, useState } from "react";
-import { View, ScrollView, Pressable, Alert } from "react-native";
+import { View, ScrollView, Pressable, Platform, Linking } from "react-native";
 import { useRouter } from "expo-router";
 import { Screen, TP, Header, Btn, Input, Divider, StatusPill } from "@/src/ui";
 import { api, theme } from "@/src/api";
 import { useAuth } from "@/src/auth";
+import { useSubscription } from "@/src/revenuecat";
 
 export default function Settings() {
   const router = useRouter();
-  const { user, org, subscription, logout, refresh } = useAuth();
+  const { user, org, logout } = useAuth();
+  const { isSubscribed, inTrial, expirationDate, restore, isRestoring, rcEnabled } = useSubscription();
   const [users, setUsers] = useState<any[]>([]);
   const [invite, setInvite] = useState({ name: "", email: "", password: "", role: "employe" as "employe" | "responsable" });
   const [inviteMsg, setInviteMsg] = useState("");
+  const [subMsg, setSubMsg] = useState("");
   const [busy, setBusy] = useState(false);
 
   const loadUsers = async () => {
@@ -31,17 +34,23 @@ export default function Settings() {
     finally { setBusy(false); }
   };
 
-  const subscribeNow = async () => {
-    setBusy(true);
-    try { await api.subscribe(); await refresh(); } catch (e: any) { setInviteMsg(e.message); }
-    finally { setBusy(false); }
+  const doRestore = async () => {
+    setSubMsg("");
+    try {
+      const info: any = await restore();
+      setSubMsg(info?.entitlements?.active?.pro ? "Abonnement restauré ✓" : "Aucun abonnement actif trouvé.");
+    } catch (e: any) { setSubMsg(e?.message || "Restauration impossible."); }
   };
 
-  const cancelSub = async () => {
-    setBusy(true);
-    try { await api.cancel(); await refresh(); } catch {}
-    finally { setBusy(false); }
+  const manageSubscription = () => {
+    const url = Platform.OS === "ios"
+      ? "https://apps.apple.com/account/subscriptions"
+      : "https://play.google.com/store/account/subscriptions";
+    Linking.openURL(url).catch(() => {});
   };
+
+  const subState = isSubscribed ? (inTrial ? "essai" : "actif") : "expire";
+  const expiryText = expirationDate ? new Date(expirationDate).toLocaleDateString("fr-FR") : null;
 
   return (
     <Screen testID="settings-screen">
@@ -59,25 +68,34 @@ export default function Settings() {
         <TP weight="black" size={11} style={{ textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Abonnement</TP>
         <View style={{ borderWidth: 2, borderColor: theme.borderStrong, padding: 16, marginBottom: 8 }}>
           <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-            <View>
+            <View style={{ flex: 1 }}>
               <TP weight="black" size={18}>TRACEPRO PRO</TP>
               <TP size={13} color={theme.textMuted}>12,99 €/mois — Essai 15 jours</TP>
             </View>
             <StatusPill
-              label={subscription?.state === "essai" ? `Essai · ${subscription?.days_left ?? "-"}j` : subscription?.state === "actif" ? "Actif" : "Expiré"}
-              tone={subscription?.state === "actif" ? "success" : subscription?.state === "essai" ? "warning" : "danger"}
+              label={subState === "essai" ? "Essai" : subState === "actif" ? "Actif" : "Inactif"}
+              tone={subState === "actif" ? "success" : subState === "essai" ? "warning" : "danger"}
             />
           </View>
-          {isManager && (
-            <View style={{ marginTop: 12, gap: 8 }}>
-              {subscription?.state !== "actif" ? (
-                <Btn label="Activer l'abonnement" onPress={subscribeNow} disabled={busy} testID="subscribe-now" />
-              ) : (
-                <Btn label="Résilier à la fin de période" variant="danger" onPress={cancelSub} disabled={busy} testID="cancel-sub" />
-              )}
-              <TP size={11} color={theme.textMuted}>Résiliable à tout moment. Aucun engagement.</TP>
+          {expiryText ? (
+            <TP size={12} color={theme.textMuted} style={{ marginTop: 8 }}>
+              {inTrial ? "Fin de l'essai gratuit : " : "Prochain renouvellement : "}{expiryText}
+            </TP>
+          ) : null}
+          <View style={{ marginTop: 12, gap: 8 }}>
+            {!isSubscribed ? (
+              <Btn label="Voir l'abonnement" onPress={() => router.push("/paywall")} testID="subscribe-now" />
+            ) : (
+              <Btn label="Gérer mon abonnement" onPress={manageSubscription} testID="manage-sub" />
+            )}
+            <Btn label={isRestoring ? "..." : "Restaurer mes achats"} variant="ghost" small onPress={doRestore} disabled={isRestoring} testID="restore-purchases" />
+            <View style={{ flexDirection: "row", justifyContent: "center", gap: 16, marginTop: 4 }}>
+              <Pressable onPress={() => router.push("/legal?doc=terms")} testID="settings-terms"><TP size={11} weight="bold" color={theme.textMuted}>Conditions</TP></Pressable>
+              <Pressable onPress={() => router.push("/legal?doc=privacy")} testID="settings-privacy"><TP size={11} weight="bold" color={theme.textMuted}>Confidentialité</TP></Pressable>
             </View>
-          )}
+            {subMsg ? <TP size={12} weight="bold" style={{ marginTop: 4 }} testID="sub-msg">{subMsg}</TP> : null}
+            {!rcEnabled ? <TP size={11} color={theme.textMuted}>Gestion de l'abonnement disponible sur l'app mobile.</TP> : null}
+          </View>
         </View>
 
         {/* Rappels & controls */}

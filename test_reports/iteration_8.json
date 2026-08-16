@@ -1,0 +1,37 @@
+{
+  "summary": "Iteration 8 retest of the RevenueCat identity-binding fix. BACKEND REGRESSION: 84/84 pytest passed in 6.21s (test_tracepro_api.py + test_iteration3_features.py + test_iteration4_features.py + test_export_query_token.py) — no regressions from the frontend-only fix. FRONTEND (mobile 390x844 on web Test Store): (1) Login as test@tracepro.fr/password123 succeeds and the unsubscribed user is correctly redirected to /paywall (testID paywall-screen). (2) HIGH-PRIORITY BUG FROM ITER_7 IS FIXED — paywall-subscribe is ENABLED immediately (aria-disabled=None on the very first poll after paywall render, previously stuck 'true' for >30s). Root cause fix in src/revenuecat.tsx works: Purchases.logIn now seeds queryClient.setQueryData(['revenuecat','customer-info'], customerInfo) on line 72, purchase/restore mutations also seed cache (lines 92, 100), and identityReady on web is derived from !!user?.id (line 111) so Web Browser Mode's anonymous originalAppUserId no longer blocks the paywall. No paywall-identity-error, no paywall-unavailable. (3) Tapping paywall-subscribe opens the confirm modal (paywall-confirm-modal) and paywall-confirm is enabled and clickable — confirming the end-to-end confirm leg is reachable on web (the RC Test Store popup itself is expected not to complete in automation, per instructions). (4) Paywall content verified: 'TRACEPRO / Abonnement PRO' header, orange '15 JOURS GRATUITS' banner, 'puis €12.99 / mois' (real RC priceString), full auto-renewal disclosure, 6 benefits, and all buttons: paywall-subscribe, paywall-restore, paywall-manage, paywall-terms (→ legal-screen ✓), paywall-privacy (→ legal-screen ✓), plus the once-per-account + cancel-24h Apple disclosures. (5) Stray annual package cleanup CONFIRMED — the 'Could not find product data for product ids: pro.annual' RC warning no longer appears in the console during paywall load; offerings expose only the monthly package. Carry-over non-blocking warnings (expo-notifications on web, react-native-web pointerEvents deprecation) remain and are third-party.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "react-native-web internals (3rd-party, carry-over)", "issue": "Console warning 'props.pointerEvents is deprecated. Use style.pointerEvents' — non-blocking, not in app code."},
+      {"component": "expo-notifications on web (carry-over)", "issue": "'[expo-notifications] Listening to push token changes is not yet fully supported on web' — already gated by Platform.OS==='web' in reminders; harmless."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_tracepro_api.py",
+    "/app/backend/tests/test_iteration3_features.py",
+    "/app/backend/tests/test_iteration4_features.py",
+    "/app/backend/tests/test_export_query_token.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "src/revenuecat.tsx L67-73: correctly seeds the customer-info query cache with the CustomerInfo returned by Purchases.logIn — this is the exact mitigation recommended in iteration_7 RCA. Good.",
+    "src/revenuecat.tsx L111: identityReady = Platform.OS==='web' ? !!user?.id : !isAnonymous — sensible split; native still requires a non-anonymous RC identity, web Test Store only requires an authenticated app user.",
+    "src/revenuecat.tsx L85-95: purchase mutation still guards native path with the '$RCAnonymousID:' check but explicitly lets web through — matches the paywall gating. Consistent.",
+    "src/revenuecat.tsx L97-103: restore mutation now also seeds cache with the returned CustomerInfo — good, keeps entitlement state coherent without waiting for the update listener.",
+    "app/paywall.tsx L97: disabled={isPurchasing || !identityReady} — correctly re-enables once the seeded identity is authenticated. Confirm modal + paywall-confirm reachable.",
+    "AuthGate in _layout.tsx and settings.tsx still consume ONLY useSubscription().isSubscribed for gating — no fake activation path in the client. Compliant.",
+    "server.py legacy /subscription/subscribe|cancel|status endpoints unchanged; not used by the app anymore but preserved for backwards-compat and covered by tests."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (84/84)", "frontend": "100% — subscribe button enabled, confirm modal opens, all testIDs present, legal navigation works, pro.annual warning gone"},
+  "seed_data_creation": "None new — reused existing TEST_* fixtures and the seeded responsable account.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iteration 7 HIGH bug (paywall-subscribe stuck disabled on web due to RC anonymous identity in Browser Mode) is fully fixed by seeding the customer-info query cache from Purchases.logIn's returned CustomerInfo AND deriving identityReady from user.id on web. On mobile viewport (390x844) after login as test@tracepro.fr/password123, paywall-subscribe is enabled immediately and the confirm modal opens; the RC Test Store popup remains non-completable in automation (expected). Stray $rc_annual package was removed from the 'default' offering — the 'Could not find product data for product ids: pro.annual' warning is gone. Backend regression suite (~84 tests) still 100% green.",
+  "rca_of_issue": "N/A — HIGH bug from iteration_7 verified fixed. Reproduction steps from iteration_7 (login → /paywall → inspect paywall-subscribe aria-disabled) now yield aria-disabled=None immediately (previously stayed 'true' for >30s). Fix applied by main agent in src/revenuecat.tsx: queryClient.setQueryData(['revenuecat','customer-info'], customerInfo) after Purchases.logIn (line 72), same for purchase (L92) and restore (L100), and identityReady on web computed from !!user?.id (L111)."
+}

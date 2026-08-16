@@ -50,6 +50,14 @@ Comptes, tableau de bord, réceptions, lots/traçabilité, scanner, recherche, D
 - ✅ Auth des téléchargements via `?token=` (header OU query) pour PDF/CSV/dossier
 - ✅ Backend: 84/84 tests pytest verts
 
+## Implemented (Itération 4 — Abonnement réel RevenueCat/StoreKit — 2026-08-16)
+- ✅ **Abonnement Apple/Google réel via Emergent-managed RevenueCat** (remplace l'activation Stripe simulée). Entitlement `pro`, offering `default`, produit mensuel `prodafd37c6a83` = **12,99 €/mois avec 15 jours d'essai gratuit (P15D)**.
+- ✅ Paywall (`/paywall`) : prix réel RevenueCat, essai 15j, avantages, mentions App Store (renouvellement auto, essai 1×/compte, résiliation), **Restaurer mes achats**, **Gérer mon abonnement**, liens Conditions/Confidentialité (`/legal`).
+- ✅ **Verrouillage Pro par entitlement réel** (client-side via `useSubscription().isSubscribed`) dans `AuthGate` — plus aucun statut « actif » factice local. Données conservées à l'expiration (rien n'est supprimé côté serveur).
+- ✅ Liaison d'identité `Purchases.logIn(user.id)` sur connexion ; restauration & détection actif/essai/expiré via RevenueCat.
+- ✅ Clés SDK dans `frontend/.env` (test/iOS/Android). Mémoire d'intégration : `/app/memory/revenuecat.md`.
+- ⚠️ Achats réels = build natif + config App Store Connect / Play (voir revenuecat.md). Le Test Store web valide le flux en preview.
+
 ## Backlog (P1/P2)
 - P1: Mode hors connexion + synchronisation automatique
 - P1: Export CSV
