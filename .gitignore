@@ -87,3 +87,7 @@ android-sdk/
 # Local DB backups (contain PII / password hashes — never commit)
 /db_backup/
 *.archive
+*.env
+credentials.json
+*.key
+.credentials
