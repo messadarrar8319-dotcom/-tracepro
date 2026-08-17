@@ -1,17 +1,20 @@
 """TRACEPRO backend – Food traceability API."""
 import os
 import csv
+import json
 import uuid
 import hashlib
 import secrets
 import logging
+import asyncio
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional, List, Literal, Annotated
 from io import BytesIO
 
 import jwt
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, UploadFile, File, Query, Response
+import stripe
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, UploadFile, File, Query, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.security import OAuth2PasswordBearer
@@ -45,6 +48,21 @@ JWT_ALGO = os.getenv("JWT_ALGORITHM", "HS256")
 ACCESS_MINUTES = int(os.getenv("ACCESS_MINUTES", "1440"))
 ph = PasswordHasher()
 oauth2 = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
+
+# ---------------- Stripe (web SaaS subscription) ----------------
+STRIPE_API_KEY = os.getenv("STRIPE_API_KEY", "sk_test_emergent")
+stripe.api_key = STRIPE_API_KEY
+# Emergent-managed test proxy (no user key required).
+if "sk_test_emergent" in STRIPE_API_KEY:
+    stripe.api_base = "https://integrations.emergentagent.com/stripe"
+SUB_PRICE_CENTS = 1299
+SUB_CURRENCY = "eur"
+TRIAL_DAYS = 15
+
+
+async def _stripe(fn, **kwargs):
+    """Run the synchronous Stripe SDK off the event loop."""
+    return await asyncio.to_thread(fn, **kwargs)
 
 
 def now() -> datetime:
@@ -227,6 +245,7 @@ async def startup():
     await db.receptions.create_index("org_id")
     await db.receptions.create_index("batch_number")
     await db.temperatures.create_index("org_id")
+    await db.stripe_events.create_index("event_id", unique=True)
     logger.info("TRACEPRO ready")
 
 
@@ -275,39 +294,42 @@ async def create_doc(collection, body, user, control_type=None) -> dict:
 
 
 def compute_subscription_status(org: dict) -> dict:
-    """Return a friendly subscription status dict for the client."""
-    trial_end = org.get("trial_end")
-    stripe_status = org.get("stripe_status")  # trialing, active, past_due, canceled
+    """Return a friendly subscription status dict for the client.
+
+    Web access requires a real Stripe subscription (card collected at signup,
+    15-day trial then 12,99 €/mois). The local `trial_end` is informational only.
+    """
     n = now()
-    if stripe_status in ("active", "trialing", "past_due"):
-        has_access = stripe_status in ("active", "trialing")
-        state = "actif" if stripe_status == "active" else ("essai" if stripe_status == "trialing" else "past_due")
-        return {
-            "state": state,
-            "has_access": has_access,
-            "trial_end": trial_end,
-            "current_period_end": org.get("current_period_end"),
-            "cancel_at_period_end": org.get("cancel_at_period_end", False),
-            "plan": "TRACEPRO PRO",
-            "price": "12,99 €/mois",
-        }
-    # Local free trial (no Stripe yet)
-    if trial_end and trial_end > n:
-        return {
-            "state": "essai",
-            "has_access": True,
-            "trial_end": trial_end,
-            "days_left": max(0, (trial_end - n).days),
-            "plan": "TRACEPRO PRO",
-            "price": "12,99 €/mois",
-        }
-    return {
-        "state": "expire",
-        "has_access": False,
-        "trial_end": trial_end,
+    sub_id = org.get("stripe_subscription_id")
+    status = org.get("stripe_status")  # trialing, active, past_due, canceled
+    cpe = org.get("current_period_end")
+    trial_end = org.get("trial_end")
+    cancel = bool(org.get("cancel_at_period_end", False))
+    base = {
         "plan": "TRACEPRO PRO",
         "price": "12,99 €/mois",
+        "trial_end": trial_end,
+        "current_period_end": cpe,
+        "cancel_at_period_end": cancel,
+        "stripe_subscription_id": sub_id,
     }
+    if sub_id and status in ("trialing", "active", "past_due"):
+        expired = cancel and cpe is not None and cpe <= n
+        has_access = status in ("trialing", "active") and not expired
+        if expired:
+            state = "expire"
+        elif status == "active":
+            state = "actif"
+        elif status == "trialing":
+            state = "essai"
+        else:
+            state = "past_due"
+        days_left = None
+        if status == "trialing" and trial_end and trial_end > n:
+            days_left = max(0, (trial_end - n).days)
+        return {**base, "state": state, "has_access": has_access, "days_left": days_left}
+    # No active Stripe subscription yet.
+    return {**base, "state": "inactif", "has_access": False}
 
 
 # ==================== AUTH ====================
@@ -326,7 +348,7 @@ async def register(body: RegisterIn):
         "address": body.address,
         "phone": body.phone,
         "trial_end": trial_end,
-        "stripe_status": "trialing",
+        "stripe_status": "none",
         "stripe_customer_id": None,
         "stripe_subscription_id": None,
         "created_at": now(),
@@ -473,12 +495,126 @@ async def subscribe(user=Depends(require_manager)):
 @api.post("/subscription/cancel")
 async def cancel_sub(user=Depends(require_manager)):
     org = await get_org(user["org_id"])
+    # In-app cancellation: keep access until the end of the paid/trial period.
     await db.organizations.update_one(
         {"id": org["id"]},
-        {"$set": {"cancel_at_period_end": True, "stripe_status": "canceled"}},
+        {"$set": {"cancel_at_period_end": True}},
     )
     org = await get_org(org["id"])
     return compute_subscription_status(org)
+
+
+# ==================== STRIPE WEB BILLING ====================
+class CheckoutIn(BaseModel):
+    origin: str
+
+
+@api.post("/billing/checkout")
+async def billing_checkout(body: CheckoutIn, user=Depends(require_manager)):
+    """Create a Stripe-hosted subscription Checkout (15-day trial then 12,99 €/mois)."""
+    org = await get_org(user["org_id"])
+    origin = body.origin.rstrip("/")
+    webhook_url = f"{origin}/api/stripe/webhook"
+    meta = {"app_org_id": org["id"], "app_user_id": user["id"]}
+    try:
+        session = await _stripe(
+            stripe.checkout.Session.create,
+            mode="subscription",
+            line_items=[{
+                "price_data": {
+                    "currency": SUB_CURRENCY,
+                    "product_data": {"name": "TRACEPRO PRO"},
+                    "unit_amount": SUB_PRICE_CENTS,
+                    "recurring": {"interval": "month"},
+                },
+                "quantity": 1,
+            }],
+            subscription_data={"trial_period_days": TRIAL_DAYS, "metadata": meta},
+            success_url=f"{origin}/billing/success?session_id={{CHECKOUT_SESSION_ID}}",
+            cancel_url=f"{origin}/billing/canceled",
+            metadata={**meta, "webhook_url": webhook_url},
+        )
+    except Exception as e:
+        raise HTTPException(502, f"Erreur Stripe: {e}")
+    await db.organizations.update_one(
+        {"id": org["id"]}, {"$set": {"checkout_session_id": session.id}}
+    )
+    return {"url": session.url, "session_id": session.id}
+
+
+async def _activate_from_session(session) -> Optional[dict]:
+    """Mark an org as trialing from a completed Stripe checkout session."""
+    meta = session.get("metadata") or {}
+    org_id = meta.get("app_org_id")
+    if not org_id:
+        return None
+    n = now()
+    trial_end = n + timedelta(days=TRIAL_DAYS)
+    await db.organizations.update_one(
+        {"id": org_id},
+        {"$set": {
+            "stripe_status": "trialing",
+            "stripe_customer_id": session.get("customer"),
+            "stripe_subscription_id": session.get("subscription") or session.get("id"),
+            "trial_end": trial_end,
+            "current_period_end": trial_end,
+            "cancel_at_period_end": False,
+        }},
+    )
+    return await db.organizations.find_one({"id": org_id}, {"_id": 0})
+
+
+@api.get("/billing/status/{session_id}")
+async def billing_status(session_id: str, user=Depends(current_user)):
+    try:
+        session = await _stripe(stripe.checkout.Session.retrieve, id=session_id)
+    except Exception as e:
+        raise HTTPException(400, f"Session introuvable: {e}")
+    meta = session.get("metadata") or {}
+    if meta.get("app_org_id") != user["org_id"]:
+        raise HTTPException(403, "Session non autorisée")
+    if session.get("status") == "complete":
+        await _activate_from_session(session)
+    org = await get_org(user["org_id"])
+    return compute_subscription_status(org)
+
+
+@api.post("/stripe/webhook")
+async def stripe_webhook(request: Request):
+    """Receive Stripe events forwarded by the Emergent proxy (no local signature)."""
+    payload = await request.body()
+    try:
+        event = json.loads(payload.decode("utf-8"))
+    except Exception:
+        raise HTTPException(400, "Payload invalide")
+    event_id = event.get("id")
+    if event_id:
+        try:
+            await db.stripe_events.insert_one(
+                {"event_id": event_id, "type": event.get("type"), "received_at": now()}
+            )
+        except Exception as exc:
+            if exc.__class__.__name__ == "DuplicateKeyError":
+                return {"received": True}
+    etype = event.get("type")
+    obj = (event.get("data") or {}).get("object") or {}
+    if etype == "checkout.session.completed":
+        await _activate_from_session(obj)
+    elif etype in ("customer.subscription.updated", "customer.subscription.deleted"):
+        cust = obj.get("customer")
+        if cust:
+            cpe = obj.get("current_period_end")
+            await db.organizations.update_one(
+                {"stripe_customer_id": cust},
+                {"$set": {
+                    "stripe_status": obj.get("status"),
+                    "cancel_at_period_end": bool(obj.get("cancel_at_period_end")),
+                    "current_period_end": (
+                        datetime.fromtimestamp(cpe, tz=timezone.utc) if cpe else None
+                    ),
+                }},
+            )
+    return {"received": True}
 
 
 # ==================== FILES ====================

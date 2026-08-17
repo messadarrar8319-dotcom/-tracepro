@@ -1,0 +1,50 @@
+{
+  "summary": "TRACEPRO web-Stripe migration verified end-to-end. BACKEND: 91/91 pytest passed in 8.28s (test_tracepro_api.py + test_iteration3_features.py + test_iteration4_features.py + test_export_query_token.py + NEW test_billing_stripe.py). Added 8 new Stripe billing tests covering: POST /billing/checkout manager 200 + employee 403; GET /billing/status/{id} own-org 200 + cross-org 403; POST /stripe/webhook checkout.session.completed flips has_access true & state='essai' and is idempotent on duplicate event_id; POST /subscription/cancel sets cancel_at_period_end=true while has_access stays true. Also updated stale test (register no longer grants trial without Stripe — /auth/me returns has_access=false and state='inactif' for a brand-new org, verified against the real API). Legacy /subscription/subscribe test converted to a compatibility-safe assertion (endpoint still 200s but no longer grants access because it doesn't set stripe_subscription_id — behavior is intentional per the PRD). FRONTEND (real preview URL): DESKTOP (1280x850) — logged in as test@tracepro.fr, testID web-sidebar renders with all 13 nav items, bottom tab-home is NOT visible, dashboard shows all 6 KPIs (Réceptions, Températures, Nettoyage, Non-conformités, Pertes, plus DLC/NC counters). MOBILE (390x844) — no web-sidebar in DOM, all 5 bottom tabs visible (tab-home / tab-search / tab-scan / tab-archives / tab-settings), settings screen renders 'ABONNEMENT' section with cancel-sub button labeled 'RÉSILIER MON ABONNEMENT'. GATE — registered a fresh account via /register (reg-* testIDs), was immediately redirected to /billing; testID billing-screen present, testID billing-subscribe enabled with label 'COMMENCER L\\'ESSAI GRATUIT', clicking it POSTs /api/billing/checkout (200) and the browser navigates to Stripe hosted checkout page ('Try TRACEPRO PRO / 15 days free / Then €12.99 per month starting September 1, 2026' with card+ApplePay). Bottom tabs unreachable while gated. CANCEL — as subscribed responsable on desktop, sidebar → Compte & réglages → testID cancel-sub calls /api/subscription/cancel (200); UI updates immediately to show 'Résiliation programmée — accès conservé jusqu\\'à la fin de la période.', cancel-sub replaced by disabled manage-sub 'ABONNEMENT ACTIF'. All acceptance criteria of the review request are met.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "app/(auth)/register.tsx", "issues": ["Banner text reads 'Toutes les fonctionnalités. Aucune carte requise à l\\'inscription.' — MISLEADING with the new Stripe web migration: web users are redirected to /billing right after registration and MUST enter a card (Stripe Checkout) to reach the app. Suggest updating the copy to something like 'Essai gratuit 15 jours — carte requise après inscription pour activer l\\'accès web.' Note: native mobile still uses RevenueCat where the paywall handles it, but the copy is identical for both platforms."]}
+    ],
+    "react_native_issues": [
+      {"component": "react-native-web internals (3rd-party, carry-over)", "issue": "Console warning 'props.pointerEvents is deprecated. Use style.pointerEvents' — non-blocking, not in app code."},
+      {"component": "expo-notifications on web (carry-over)", "issue": "'[expo-notifications] Listening to push token changes is not yet fully supported on web' — already gated by Platform.OS==='web' in reminders; harmless."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_billing_stripe.py",
+    "/app/backend/tests/test_tracepro_api.py",
+    "/app/backend/tests/test_iteration3_features.py",
+    "/app/backend/tests/test_iteration4_features.py",
+    "/app/backend/tests/test_export_query_token.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "(Copy) Update the register-screen banner subtitle in /app/frontend/app/(auth)/register.tsx: the 'Aucune carte requise à l\\'inscription' line is now inaccurate for the web flow (Stripe collects the card immediately after registration).",
+    "(Optional hygiene) The seeded manager test@tracepro.fr now has cancel_at_period_end=true after this iteration's cancel-flow test. Access is still granted until 01/09/2026 (trial end) so all future tests still pass, but if a clean state is desired reset with a Mongo update: db.organizations.update_one({id: 'ffc2188a-8a88-42ba-8290-e708760eec8d'}, {$set: {cancel_at_period_end: False}}).",
+    "(Optional test hygiene) conftest.py `new_employee` is session-scoped and is deleted by TestUsersAndRoles::test_delete_user; this caused an intermittent 401 in the first pass of the new billing test that reused it. New billing tests already work around this by creating fresh employees per test. Consider changing new_employee scope to 'function' or renaming test_delete_user's user creation to a private one."
+  ],
+  "critical_code_review_comments": [
+    "server.py L512-542 /billing/checkout: correctly gated behind require_manager, passes app_org_id in Stripe metadata for later cross-org validation. Uses SUB_CURRENCY / SUB_PRICE_CENTS / TRIAL_DAYS from config — good; success_url templated with {CHECKOUT_SESSION_ID}. session.id persisted on org.checkout_session_id.",
+    "server.py L567-579 /billing/status: retrieves session from Stripe proxy, enforces metadata.app_org_id == caller.org_id (403 otherwise), auto-activates on session.status=='complete'. Cross-org verified in test — returns 403 as expected.",
+    "server.py L582-617 /stripe/webhook: parses JSON body (no signature — matches Emergent proxy limitation), inserts event_id into stripe_events with unique index (L248) for idempotency; DuplicateKeyError swallowed → second call returns {'received': True}. Verified in test.",
+    "server.py L495-504 /subscription/cancel: manager-only, sets cancel_at_period_end=true without touching stripe_status/current_period_end → has_access remains true until period_end. Matches PRD.",
+    "server.py compute_subscription_status L296-332: elegant — requires BOTH sub_id AND status in (trialing/active/past_due) to consider the org subscribed, so a bare register (stripe_status='none', no sub_id) correctly yields state='inactif' has_access=false. Also handles cancel_at_period_end + expired current_period_end for the 'expire' state.",
+    "frontend/app/_layout.tsx AuthGate L36-56: web branch gates on subscription.has_access, native branch keeps RevenueCat entitlement. Correct dual-path; onBilling allowlist includes /legal so terms/privacy remain reachable while gated.",
+    "frontend/app/(tabs)/_layout.tsx L14-16: isDesktop=Platform.OS==='web' && width>=900 → sidebar shown, tabBarStyle:{display:'none'}. Clean responsive breakpoint.",
+    "frontend/app/(tabs)/settings.tsx L109-118: web branch correctly picks subscribe-now / manage-sub / cancel-sub based on webHasAccess and cancel_at_period_end. Refresh called after cancel so /auth/me is re-fetched.",
+    "frontend/src/web/Sidebar.tsx: uses TP + theme for consistent styling; active state via pathname match; all items have testID sidebar-<route>. No hardcoded colors.",
+    "frontend/app/billing/index.tsx currentOrigin(): uses window.location.origin on web and EXPO_PUBLIC_BACKEND_URL fallback — correct so the webhook URL points to the current preview host."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_billing_stripe.py (NEW — 8 tests for Stripe web billing endpoints, cross-org 403 and webhook idempotency)",
+    "/app/backend/tests/test_tracepro_api.py (updated TestAuth.test_register_no_trial_without_stripe and TestSubscription.test_legacy_subscribe_then_cancel to match the post-migration behavior)"
+  ],
+  "success_rate": {"backend": "100% (91/91)", "frontend": "100% — desktop sidebar/tabs hidden, mobile no sidebar/tabs visible, /billing gate with real Stripe checkout URL, cancel flow updates UI"},
+  "seed_data_creation": "Registered fresh manager TEST_gate_* + TEST_bill_* + TEST_wh_* + TEST_canc_* accounts via /api/auth/register during test runs; TEST_chkemp_* / TEST_cancemp_* employees invited under fresh managers. All prefixed TEST_ for cleanup. No modifications to seeded production-like data other than the intentional cancel_at_period_end=true side-effect on the seeded manager (see action items).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "1) Backend base URL is EXPO_PUBLIC_BACKEND_URL (https://food-traceability-1.preview.emergentagent.com), all API routes prefixed /api. 2) Register form testIDs use 'reg-' prefix (NOT 'register-'): reg-company, reg-type-Boucherie (segmented control), reg-manager, reg-address, reg-phone, reg-email, reg-password, reg-submit-button. 3) Login testIDs: login-email-input, login-password-input, login-submit-button. 4) Web gate is driven ONLY by subscription.has_access from /api/auth/me; a fresh register yields has_access=false → redirect to /billing. 5) The seeded manager test@tracepro.fr / password123 is manually seeded with stripe_status='trialing' + sub_id='sub_test_demo' so it bypasses the gate; after iteration_9 it also has cancel_at_period_end=true (still has_access=true until 01/09/2026). 6) Stripe test-mode via Emergent proxy: only checkout.Session.create/retrieve are supported — no Customer/Portal/Subscription APIs, cancel is local-only. 7) Do NOT attempt to complete card entry on the hosted checkout.stripe.com page in automation; only verify the URL is returned. 8) Sidebar testID is 'web-sidebar' and appears when width>=900 on Platform.OS==='web'; bottom tabs are hidden via tabBarStyle:{display:'none'} in that same condition.",
+  "rca_of_issue": "N/A — no bugs. Only one minor copy issue (register banner still says 'Aucune carte requise' after the Stripe migration) reported under design_issues."
+}

@@ -27,23 +27,33 @@ try {
 }
 
 function AuthGate() {
-  const { loading, user } = useAuth();
+  const { loading, user, subscription } = useAuth();
   const { isSubscribed, isLoading: subLoading, rcEnabled } = useSubscription();
   const router = useRouter();
   const segments = useSegments();
+  const isWeb = Platform.OS === "web";
 
   useEffect(() => {
     if (loading) return;
     const inAuth = segments[0] === "(auth)";
     if (!user && !inAuth) { router.replace("/(auth)/login"); return; }
     if (user && inAuth) { router.replace("/(tabs)"); return; }
-    // Pro gate: signed-in users without an active entitlement go to the paywall.
-    if (user && !inAuth && rcEnabled && !subLoading) {
-      const onPaywall = segments[0] === "paywall" || segments[0] === "legal";
-      if (!isSubscribed && !onPaywall) router.replace("/paywall");
-      else if (isSubscribed && segments[0] === "paywall") router.replace("/(tabs)");
+
+    if (user && !inAuth) {
+      if (isWeb) {
+        // Web: gate on the backend Stripe subscription (15-day trial then 12,99 €/mois).
+        const onBilling = segments[0] === "billing" || segments[0] === "legal";
+        const hasAccess = !!subscription?.has_access;
+        if (!hasAccess && !onBilling) router.replace("/billing");
+        else if (hasAccess && segments[0] === "billing") router.replace("/(tabs)");
+      } else if (rcEnabled && !subLoading) {
+        // Native: gate on the RevenueCat entitlement.
+        const onPaywall = segments[0] === "paywall" || segments[0] === "legal";
+        if (!isSubscribed && !onPaywall) router.replace("/paywall");
+        else if (isSubscribed && segments[0] === "paywall") router.replace("/(tabs)");
+      }
     }
-  }, [loading, user, segments, isSubscribed, subLoading, rcEnabled]);
+  }, [loading, user, segments, isSubscribed, subLoading, rcEnabled, subscription, isWeb]);
 
   // Reschedule local reminders on launch/login (idempotent: cancels then reschedules).
   useEffect(() => {

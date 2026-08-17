@@ -11,8 +11,8 @@ const REVENUECAT_ANDROID_API_KEY = process.env.EXPO_PUBLIC_REVENUECAT_ANDROID_AP
 
 export const REVENUECAT_ENTITLEMENT_IDENTIFIER = "pro"; // entitlement_lookup_key from setup
 
-// Web preview + Expo Go (dev) use the RevenueCat Test Store. Production web has no store.
-export const rcEnabled = Platform.OS !== "web" || __DEV__;
+// Native (iOS/Android) uses RevenueCat IAP. Web uses Stripe (see app/billing).
+export const rcEnabled = Platform.OS !== "web";
 
 function getRevenueCatApiKey() {
   if (!REVENUECAT_TEST_API_KEY || !REVENUECAT_IOS_API_KEY || !REVENUECAT_ANDROID_API_KEY) {

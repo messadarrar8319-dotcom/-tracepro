@@ -8,13 +8,14 @@ import { useSubscription } from "@/src/revenuecat";
 
 export default function Settings() {
   const router = useRouter();
-  const { user, org, logout } = useAuth();
-  const { isSubscribed, inTrial, expirationDate, restore, isRestoring, rcEnabled } = useSubscription();
+  const { user, org, logout, subscription, refresh } = useAuth();
+  const { isSubscribed, inTrial, expirationDate, restore, isRestoring } = useSubscription();
   const [users, setUsers] = useState<any[]>([]);
   const [invite, setInvite] = useState({ name: "", email: "", password: "", role: "employe" as "employe" | "responsable" });
   const [inviteMsg, setInviteMsg] = useState("");
   const [subMsg, setSubMsg] = useState("");
   const [busy, setBusy] = useState(false);
+  const isWeb = Platform.OS === "web";
 
   const loadUsers = async () => {
     try { const u: any = await api.users(); setUsers(u); } catch {}
@@ -49,8 +50,26 @@ export default function Settings() {
     Linking.openURL(url).catch(() => {});
   };
 
-  const subState = isSubscribed ? (inTrial ? "essai" : "actif") : "expire";
-  const expiryText = expirationDate ? new Date(expirationDate).toLocaleDateString("fr-FR") : null;
+  const doWebCancel = async () => {
+    setSubMsg(""); setBusy(true);
+    try {
+      await api.cancel();
+      await refresh();
+      setSubMsg("Résiliation programmée à la fin de la période ✓");
+    } catch (e: any) { setSubMsg(e?.message || "Résiliation impossible."); }
+    finally { setBusy(false); }
+  };
+
+  // Native uses RevenueCat state; web uses the backend Stripe subscription.
+  const webHasAccess = !!subscription?.has_access;
+  const subState = isWeb
+    ? subscription?.state || "inactif"
+    : (isSubscribed ? (inTrial ? "essai" : "actif") : "expire");
+  const webExpiry = subscription?.current_period_end || subscription?.trial_end;
+  const expiryText = isWeb
+    ? (webExpiry ? new Date(webExpiry).toLocaleDateString("fr-FR") : null)
+    : (expirationDate ? new Date(expirationDate).toLocaleDateString("fr-FR") : null);
+  const webInTrial = subscription?.state === "essai";
 
   return (
     <Screen testID="settings-screen">
@@ -79,22 +98,39 @@ export default function Settings() {
           </View>
           {expiryText ? (
             <TP size={12} color={theme.textMuted} style={{ marginTop: 8 }}>
-              {inTrial ? "Fin de l'essai gratuit : " : "Prochain renouvellement : "}{expiryText}
+              {(isWeb ? webInTrial : inTrial) ? "Fin de l'essai gratuit : " : "Prochain renouvellement : "}{expiryText}
             </TP>
           ) : null}
+          {isWeb && subscription?.cancel_at_period_end ? (
+            <TP size={12} weight="bold" color={theme.warning} style={{ marginTop: 6 }}>Résiliation programmée — accès conservé jusqu'à la fin de la période.</TP>
+          ) : null}
+
           <View style={{ marginTop: 12, gap: 8 }}>
-            {!isSubscribed ? (
-              <Btn label="Voir l'abonnement" onPress={() => router.push("/paywall")} testID="subscribe-now" />
+            {isWeb ? (
+              <>
+                {!webHasAccess ? (
+                  <Btn label="Voir l'abonnement" onPress={() => router.push("/billing")} testID="subscribe-now" />
+                ) : subscription?.cancel_at_period_end ? (
+                  <Btn label="Abonnement actif" onPress={() => {}} disabled testID="manage-sub" />
+                ) : (
+                  <Btn label={busy ? "..." : "Résilier mon abonnement"} variant="danger" onPress={doWebCancel} disabled={busy} testID="cancel-sub" />
+                )}
+              </>
             ) : (
-              <Btn label="Gérer mon abonnement" onPress={manageSubscription} testID="manage-sub" />
+              <>
+                {!isSubscribed ? (
+                  <Btn label="Voir l'abonnement" onPress={() => router.push("/paywall")} testID="subscribe-now" />
+                ) : (
+                  <Btn label="Gérer mon abonnement" onPress={manageSubscription} testID="manage-sub" />
+                )}
+                <Btn label={isRestoring ? "..." : "Restaurer mes achats"} variant="ghost" small onPress={doRestore} disabled={isRestoring} testID="restore-purchases" />
+              </>
             )}
-            <Btn label={isRestoring ? "..." : "Restaurer mes achats"} variant="ghost" small onPress={doRestore} disabled={isRestoring} testID="restore-purchases" />
             <View style={{ flexDirection: "row", justifyContent: "center", gap: 16, marginTop: 4 }}>
               <Pressable onPress={() => router.push("/legal?doc=terms")} testID="settings-terms"><TP size={11} weight="bold" color={theme.textMuted}>Conditions</TP></Pressable>
               <Pressable onPress={() => router.push("/legal?doc=privacy")} testID="settings-privacy"><TP size={11} weight="bold" color={theme.textMuted}>Confidentialité</TP></Pressable>
             </View>
             {subMsg ? <TP size={12} weight="bold" style={{ marginTop: 4 }} testID="sub-msg">{subMsg}</TP> : null}
-            {!rcEnabled ? <TP size={11} color={theme.textMuted}>Gestion de l'abonnement disponible sur l'app mobile.</TP> : null}
           </View>
         </View>
 

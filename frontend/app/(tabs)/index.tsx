@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { View, ScrollView, RefreshControl, Pressable } from "react-native";
+import { View, ScrollView, RefreshControl, Pressable, Platform } from "react-native";
 import { useRouter, useFocusEffect } from "expo-router";
 import { Screen, TP, Tile, ActionButton, Divider, StatusPill, SyncBanner } from "@/src/ui";
 import { api, theme } from "@/src/api";
@@ -9,11 +9,16 @@ import { useSubscription } from "@/src/revenuecat";
 
 export default function Home() {
   const router = useRouter();
-  const { user, org, refresh } = useAuth();
+  const { user, org, refresh, subscription } = useAuth();
   const { isSubscribed, inTrial } = useSubscription();
   const { syncState, pendingCount, syncNow, refreshPending } = useNetwork();
   const [data, setData] = useState<any>(null);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Web = backend Stripe subscription; native = RevenueCat entitlement.
+  const isWeb = Platform.OS === "web";
+  const subActive = isWeb ? !!subscription?.has_access : isSubscribed;
+  const subTrial = isWeb ? subscription?.state === "essai" : inTrial;
 
   const load = useCallback(async () => {
     try { const d = await api.dashboard(); setData(d); } catch {}
@@ -35,7 +40,7 @@ export default function Home() {
           <TP color={theme.brandSecondary} weight="bold" size={11} style={{ letterSpacing: 1, textTransform: "uppercase" }}>Tableau de bord</TP>
           <TP color="#FFF" weight="black" size={26} style={{ marginTop: 2 }}>{org?.company_name || "TRACEPRO"}</TP>
           <View style={{ flexDirection: "row", marginTop: 10, gap: 8, alignItems: "center" }}>
-            <StatusPill label={inTrial ? "Essai gratuit" : isSubscribed ? "Abonné PRO" : "Inactif"} tone={isSubscribed ? (inTrial ? "warning" : "success") : "danger"} />
+            <StatusPill label={subTrial ? "Essai gratuit" : subActive ? "Abonné PRO" : "Inactif"} tone={subActive ? (subTrial ? "warning" : "success") : "danger"} />
             <TP color="#FFF" size={11}>{user?.name} · {user?.role === "responsable" ? "Responsable" : "Employé"}</TP>
           </View>
         </View>

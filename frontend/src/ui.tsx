@@ -1,5 +1,5 @@
 import React from "react";
-import { Text, TextProps, View, StyleSheet, Pressable, PressableProps, TextInput, TextInputProps, ScrollView } from "react-native";
+import { Text, TextProps, View, StyleSheet, Pressable, PressableProps, TextInput, TextInputProps, ScrollView, Platform, useWindowDimensions } from "react-native";
 import { theme } from "./api";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -9,12 +9,15 @@ export function TP({ children, style, weight = "regular", size = 14, color, ...r
 }
 
 export function Screen({ children, style, scroll = true, testID }: { children: React.ReactNode; style?: any; scroll?: boolean; testID?: string }) {
+  const { width } = useWindowDimensions();
+  const wide = Platform.OS === "web" && width >= 900;
+  const wideStyle = wide ? { maxWidth: 1040, width: "100%" as const, alignSelf: "center" as const } : null;
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }} edges={["top", "left", "right"]} testID={testID}>
       {scroll ? (
-        <ScrollView contentContainerStyle={[{ paddingBottom: 40 }, style]}>{children}</ScrollView>
+        <ScrollView contentContainerStyle={[{ paddingBottom: 40 }, wideStyle, style]}>{children}</ScrollView>
       ) : (
-        <View style={[{ flex: 1 }, style]}>{children}</View>
+        <View style={[{ flex: 1 }, wideStyle, style]}>{children}</View>
       )}
     </SafeAreaView>
   );

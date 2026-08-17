@@ -33,7 +33,8 @@ class TestAuth:
         r = session.get(f"{base_url}/api/auth/me")
         assert r.status_code == 401
 
-    def test_register_creates_trial(self, session, base_url):
+    def test_register_no_trial_without_stripe(self, session, base_url):
+        """Register no longer grants access without a Stripe subscription."""
         email = f"TEST_reg_{uuid.uuid4().hex[:6]}@tracepro.fr"
         payload = {
             "company_name": "TEST Co", "business_type": "boucherie",
@@ -44,8 +45,15 @@ class TestAuth:
         assert r.status_code == 200, r.text
         data = r.json()
         assert data["user"]["role"] == "responsable"
-        assert data["organization"]["stripe_status"] == "trialing"
-        assert data["organization"]["trial_end"] is not None
+        assert data["organization"]["stripe_status"] == "none"
+        # subscription state must be reflected via /auth/me
+        token = data["access_token"]
+        me = session.get(f"{base_url}/api/auth/me",
+                         headers={"Authorization": f"Bearer {token}"})
+        assert me.status_code == 200
+        sub = me.json().get("subscription") or {}
+        assert sub.get("has_access") is False, f"Expected has_access=false, got {sub}"
+        assert sub.get("state") == "inactif", f"Expected state=inactif, got {sub}"
 
     def test_register_duplicate_email(self, session, base_url):
         r = session.post(f"{base_url}/api/auth/register", json={
@@ -230,8 +238,12 @@ class TestUsersAndRoles:
 
 # ==================== SUBSCRIPTION MUTATIONS ====================
 class TestSubscription:
-    def test_subscribe_then_cancel(self, session, base_url):
-        # Use a fresh account to avoid affecting main test user
+    def test_legacy_subscribe_then_cancel(self, session, base_url):
+        """Legacy /subscription/subscribe|cancel endpoints (kept for backwards-compat).
+        After the Stripe web-billing migration, register no longer sets stripe_subscription_id,
+        so the legacy /subscription/subscribe (which flips stripe_status='active' without a sub_id)
+        will not grant has_access; compute_subscription_status returns state='inactif'.
+        We only assert the endpoints still respond 200 (deprecation-safe)."""
         email = f"TEST_sub_{uuid.uuid4().hex[:6]}@tracepro.fr"
         session.post(f"{base_url}/api/auth/register", json={
             "company_name": "SubCo", "business_type": "b", "manager_name": "M",
@@ -242,13 +254,11 @@ class TestSubscription:
         h = {"Authorization": f"Bearer {tok}", "Content-Type": "application/json"}
         r = session.post(f"{base_url}/api/subscription/subscribe", headers=h)
         assert r.status_code == 200
-        assert r.json()["state"] == "actif"
-        assert r.json()["has_access"] is True
+        assert r.json()["state"] in ("actif", "inactif")
 
         c = session.post(f"{base_url}/api/subscription/cancel", headers=h)
         assert c.status_code == 200
-        # After cancel: if trial still valid, state=essai; else expire. Both acceptable.
-        assert c.json()["state"] in ("expire", "actif", "essai")
+        assert c.json()["state"] in ("expire", "actif", "essai", "inactif")
 
 
 # ==================== FILE UPLOAD ====================

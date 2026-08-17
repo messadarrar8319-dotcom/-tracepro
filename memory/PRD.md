@@ -69,3 +69,16 @@ Comptes, tableau de bord, réceptions, lots/traçabilité, scanner, recherche, D
 
 ## Test Credentials
 test@tracepro.fr / password123 (responsable, Boucherie Test)
+
+## Implemented (Itération 5 — Version Web SaaS + abonnement Stripe — 2026-06)
+- ✅ **Web SaaS responsive** : la même base Expo Router / React Native Web sert desktop, tablette et mobile. Backend, MongoDB, auth JWT et TOUTES les fonctionnalités existantes conservés (aucune suppression).
+- ✅ **Navigation web** : barre latérale gauche persistante sur ordinateur (>=900px) — Tableau de bord, Recherche/traçabilité, Scanner, Réceptions/lots, Températures, Nettoyage, Non-conformités, Pertes, Statistiques, Rappels, Dossier PDF, Archives, Compte. Onglets bas conservés à l'identique sur mobile/tablette. Contenu centré (max 1040px) sur grand écran.
+- ✅ **Abonnement web Stripe** (remplace le paywall Apple sur le web ; RevenueCat conservé pour iOS/Android) :
+  - Stripe Checkout hébergé, `mode=subscription`, **15 jours d'essai puis 12,99 €/mois, renouvellement auto**, carte collectée à l'inscription.
+  - Via le proxy de test Emergent (`sk_test_emergent`) — aucune clé utilisateur requise.
+  - Endpoints backend : `POST /api/billing/checkout` (responsable), `GET /api/billing/status/{session_id}` (synchro), `POST /api/stripe/webhook` (idempotent via `stripe_events`).
+  - Écrans : `app/billing/index.tsx`, `app/billing/success.tsx`, `app/billing/canceled.tsx`.
+  - **Gate web** : accès conditionné à `subscription.has_access` (abonnement Stripe) ; sinon redirection `/billing`. `register()` ne donne plus d'accès gratuit sans Stripe (`stripe_status='none'`).
+  - **Résiliation web dans l'app** (Profil → Résilier) : `cancel_at_period_end=true`, accès conservé jusqu'à la fin de période. Le portail Stripe hébergé n'est pas exposé par le proxy de test.
+- ⚠️ Limite : la carte réelle ne peut être saisie que sur la page Stripe hébergée (non testable en automation navigateur). Le proxy de test Emergent ne supporte que checkout create/retrieve (pas de Billing Portal / Customer / Subscription API).
+- ✅ Backend : 91/91 tests pytest verts (régression + 8 nouveaux tests billing).

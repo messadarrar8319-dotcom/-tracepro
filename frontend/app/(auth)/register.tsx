@@ -30,7 +30,7 @@ export default function Register() {
         <ScrollView contentContainerStyle={{ padding: 20 }} keyboardShouldPersistTaps="handled">
           <View style={{ backgroundColor: theme.brand, padding: 16, marginBottom: 20, borderWidth: 2, borderColor: theme.borderStrong }}>
             <TP color="#FFF" weight="black" size={16}>15 JOURS GRATUITS</TP>
-            <TP color="#FFF" size={12} style={{ marginTop: 2 }}>Toutes les fonctionnalités. Aucune carte requise à l'inscription.</TP>
+            <TP color="#FFF" size={12} style={{ marginTop: 2 }}>Toutes les fonctionnalités incluses. Sans engagement, résiliable à tout moment.</TP>
           </View>
 
           <Input label="Nom de l'entreprise" testID="reg-company" value={f.company_name} onChangeText={(v) => setF({ ...f, company_name: v })} placeholder="Ma Boucherie" />

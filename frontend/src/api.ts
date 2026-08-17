@@ -61,6 +61,9 @@ export const api = {
   subStatus: () => request("/subscription/status"),
   subscribe: () => request("/subscription/subscribe", { method: "POST" }),
   cancel: () => request("/subscription/cancel", { method: "POST" }),
+  billingCheckout: (origin: string) =>
+    request("/billing/checkout", { method: "POST", body: JSON.stringify({ origin }) }),
+  billingStatus: (sessionId: string) => request(`/billing/status/${encodeURIComponent(sessionId)}`),
 
   uploadFile: async (uri: string, name: string, type: string) => {
     const token = await readToken();
