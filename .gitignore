@@ -84,3 +84,6 @@ memory/test_credentials.md
 
 # Mobile development
 android-sdk/
+# Local DB backups (contain PII / password hashes — never commit)
+/db_backup/
+*.archive
